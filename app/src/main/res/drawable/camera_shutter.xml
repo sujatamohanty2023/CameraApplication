@@ -1,0 +1,22 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="64dp"
+    android:height="64dp"
+    android:viewportWidth="64"
+    android:viewportHeight="64">
+
+    <!-- Outer ring -->
+    <path
+        android:pathData="M32,4
+            A28,28 0 1 1 31.999,4
+            Z"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4"
+        android:fillColor="@android:color/transparent" />
+
+    <!-- Inner solid circle -->
+    <path
+        android:pathData="M32,14
+            A18,18 0 1 1 31.999,14
+            Z"
+        android:fillColor="#FFFFFF" />
+</vector>
