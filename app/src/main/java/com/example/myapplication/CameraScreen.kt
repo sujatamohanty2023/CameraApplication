@@ -1,16 +1,19 @@
 package com.example.myapplication
 
 import android.Manifest
+import android.os.SystemClock
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
-import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -20,6 +23,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
@@ -28,7 +33,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 
 @Composable
 fun CameraScreen() {
@@ -43,14 +51,6 @@ fun CameraScreen() {
     var cameraPermissionGranted by remember { mutableStateOf(false) }
     var previewView: PreviewView? by remember { mutableStateOf(null) }
     var cameraProvider by remember { mutableStateOf<ProcessCameraProvider?>(null) }
-
-    // Segment-wise recording state
-    var isRecording by remember { mutableStateOf(false) }
-    var isProgressbarShow by remember { mutableStateOf(false) }
-    val maxRecordingDuration = 15_000L // max total duration in ms (e.g. 15 seconds)
-
-    var segments by remember { mutableStateOf(listOf<Long>()) } // List of segment durations in ms
-    var currentSegmentDuration by remember { mutableLongStateOf(0L) }
 
     // Request camera permission
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
@@ -78,25 +78,6 @@ fun CameraScreen() {
         }
     }
 
-    // Manage segment timing when recording
-    LaunchedEffect(isRecording) {
-        if (isRecording) {
-            currentSegmentDuration = 0L
-            // Simulate segment recording with a timer, update duration every 100ms
-            while (isRecording  && segments.sum() + currentSegmentDuration < maxRecordingDuration) {
-                delay(100)
-                currentSegmentDuration += 100
-            }
-            if (isRecording) {
-                // Auto stop segment after max duration
-                isRecording = false
-                segments = segments + currentSegmentDuration
-                currentSegmentDuration = 0L
-                Log.d("CameraScreen", "Segment auto-stopped at max duration")
-            }
-        }
-    }
-
     Box(modifier = Modifier.fillMaxSize()) {
         if (cameraPermissionGranted) {
             AndroidView(factory = { ctx ->
@@ -110,20 +91,8 @@ fun CameraScreen() {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .statusBarsPadding()
-                .padding(horizontal = 10.dp, vertical = 10.dp)
                 .align(Alignment.TopCenter)
         ) {
-
-            // Top segmented progress bar for recorded segments
-            if (selectedTab =="Clips" && isProgressbarShow) {
-                SegmentedProgressBar(
-                    segments = segments,
-                    currentSegmentDuration = currentSegmentDuration,
-                    maxRecordingDuration = maxRecordingDuration
-                )
-            }
-
             TopBar(
                 onFlip = {
                     lensFacing = if (lensFacing == CameraSelector.LENS_FACING_BACK)
@@ -162,25 +131,7 @@ fun CameraScreen() {
             if (selectedTab != "Live") {
                 RecordBar(
                     selectedTab = selectedTab,
-                    isRecording = isRecording,
                     onRecordClick = {
-                        if (isRecording) {
-                            // Stop current segment recording
-                            isRecording = false
-                            segments = segments + currentSegmentDuration
-                            currentSegmentDuration = 0L
-                            Log.d("CameraScreen", "Recording stopped. Segments: $segments")
-                        } else {
-                            // Check total duration to prevent exceeding max
-                            val totalDuration = segments.sum()
-                            if (totalDuration < maxRecordingDuration) {
-                                isRecording = true
-                                isProgressbarShow=true
-                                Log.d("CameraScreen", "Recording started")
-                            } else {
-                                Log.d("CameraScreen", "Max recording duration reached")
-                            }
-                        }
                     },
                     onPhotoClick = {
                         Log.d("CameraScreen", "Photo captured")
@@ -205,66 +156,178 @@ fun CameraScreen() {
     }
 }
 @Composable
-fun SegmentedProgressBar(
+fun SegmentRecordButton(
     modifier: Modifier = Modifier,
-    segments: List<Long>,
-    currentSegmentDuration: Long,
-    maxRecordingDuration: Long
+    maxDurationMs: Long = 15000L,
+    onStartRecording: () -> Unit = {},
+    onStopRecording: () -> Unit = {}
 ) {
-    if (maxRecordingDuration <= 0L) return // Prevent divide-by-zero
+    var isRecording by remember { mutableStateOf(false) }
+    var isPaused by remember { mutableStateOf(false) }
+    val segments = remember { mutableStateListOf<Float>() }
+    val whiteSeparators = remember { mutableStateListOf<Float>() } // Angle for white lines
+    var currentSegmentProgress by remember { mutableFloatStateOf(0f) }
+    val coroutineScope = rememberCoroutineScope()
+    var recordingJob by remember { mutableStateOf<Job?>(null) }
 
-    val totalRecorded = segments.sum() + currentSegmentDuration
-
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(4.dp)
-            .clip(RoundedCornerShape(4.dp))
-            .background(Color.LightGray.copy(alpha = 0.5f))
-    ) {
-        // Render each completed segment
-        segments.forEach { segmentDuration ->
-            val fraction = (segmentDuration.toFloat() / maxRecordingDuration).coerceIn(0.01f, 1f)
-            Box(
-                modifier = Modifier
-                    .weight(fraction)
-                    .fillMaxHeight()
-                    .padding(end = 1.dp)
-                    .background(Color.Red, RoundedCornerShape(4.dp))
-            )
-        }
-
-        // Render the current in-progress segment
-
-            val currentFraction = (currentSegmentDuration.toFloat() / maxRecordingDuration).coerceIn(0.01f, 1f)
-            Box(
-                modifier = Modifier
-                    .weight(currentFraction)
-                    .fillMaxHeight()
-                    .padding(end = 1.dp)
-                    .background(Color.Red, RoundedCornerShape(4.dp))
-            )
-
-        // Fill remaining space with light gray
-        val remainingFraction = (1f - (totalRecorded.toFloat() / maxRecordingDuration)).coerceIn(0f, 1f)
-        if (remainingFraction > 0f) {
-            Box(
-                modifier = Modifier
-                    .weight(remainingFraction)
-                    .fillMaxHeight()
-                    .background(Color.LightGray.copy(alpha = 0.5f))
-            )
+    fun stopRecording(reason: String = "Manual") {
+        Log.d("SegmentRecordButton", "Stopping recording: $reason")
+        recordingJob?.cancel()
+        recordingJob = null
+        isRecording = false
+        isPaused = false
+        if (currentSegmentProgress > 0f) {
+            segments.add(currentSegmentProgress)
+            val whiteAngle = segments.sum() * 360f
+            whiteSeparators.add(whiteAngle)
+            currentSegmentProgress = 0f
+            onStopRecording()
         }
     }
-}
 
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = modifier
+            .size(100.dp)
+            .clickable {
+                when {
+                    !isRecording -> {
+                        isRecording = true
+                        isPaused = false
+                        onStartRecording()
+                        recordingJob = coroutineScope.launch {
+                            val startTime = SystemClock.elapsedRealtime()
+                            while (isActive) {
+                                val now = SystemClock.elapsedRealtime()
+                                val elapsed = now - startTime
+                                currentSegmentProgress = (elapsed / maxDurationMs.toFloat()).coerceAtMost(1f)
+
+                                val totalProgress = segments.sum() + currentSegmentProgress
+                                if (totalProgress >= 1f) {
+                                    stopRecording("Auto - Max Duration Reached")
+                                    break
+                                }
+
+                                delay(16)
+                            }
+                        }
+                    }
+
+                    isRecording && !isPaused -> {
+                        // Pause
+                        isPaused = true
+                        recordingJob?.cancel()
+                        recordingJob = null
+                        if (currentSegmentProgress > 0f) {
+                            segments.add(currentSegmentProgress)
+                            val whiteAngle = segments.sum() * 360f
+                            whiteSeparators.add(whiteAngle)
+                            currentSegmentProgress = 0f
+                        }
+                    }
+
+                    isRecording && isPaused -> {
+                        // Resume
+                        isPaused = false
+                        recordingJob = coroutineScope.launch {
+                            val startTime = SystemClock.elapsedRealtime()
+                            while (isActive) {
+                                val now = SystemClock.elapsedRealtime()
+                                val elapsed = now - startTime
+                                currentSegmentProgress = (elapsed / maxDurationMs.toFloat()).coerceAtMost(1f)
+
+                                val totalProgress = segments.sum() + currentSegmentProgress
+                                if (totalProgress >= 1f) {
+                                    stopRecording("Auto - Max Duration Reached")
+                                    break
+                                }
+
+                                delay(16)
+                            }
+                        }
+                    }
+                }
+            }
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val stroke = 8.dp.toPx()
+            var startAngle = -90f
+
+            // Draw all red segments
+            segments.forEach { segment ->
+                val sweep = 360f * segment
+                drawArc(
+                    color = Color.Red,
+                    startAngle = startAngle,
+                    sweepAngle = sweep,
+                    useCenter = false,
+                    style = Stroke(width = stroke)
+                )
+                startAngle += sweep
+            }
+
+            // Draw current red segment (if recording and not paused)
+            if (isRecording && !isPaused && currentSegmentProgress > 0f) {
+                val sweep = 360f * currentSegmentProgress
+                drawArc(
+                    color = Color.Red,
+                    startAngle = startAngle,
+                    sweepAngle = sweep,
+                    useCenter = false,
+                    style = Stroke(width = stroke)
+                )
+                startAngle += sweep
+            }
+
+            // Draw white separator lines at segment ends (pause points)
+            whiteSeparators.forEach { angle ->
+                drawArc(
+                    color = Color.LightGray,
+                    startAngle = -90f + angle,
+                    sweepAngle = 3f,
+                    useCenter = false,
+                    style = Stroke(width = stroke)
+                )
+            }
+
+            // Draw remaining arc as white (not yet recorded)
+            val totalProgress = segments.sum() + currentSegmentProgress
+            val remaining = 360f - (360f * totalProgress)
+            if (remaining > 0f) {
+                drawArc(
+                    color = Color.White,
+                    startAngle = startAngle,
+                    sweepAngle = remaining,
+                    useCenter = false,
+                    style = Stroke(width = stroke)
+                )
+            }
+        }
+
+        // Button UI (Red = recording, Gray = paused, White = idle)
+        Box(
+            modifier = Modifier
+                .size(50.dp)
+                .clip(CircleShape)
+                .background(
+                    when {
+                        //isRecording && isPaused -> Color.Gray
+                        isRecording -> Color.Red
+                        else -> Color.White
+                    }
+                )
+                .border(5.dp, Color.Transparent, CircleShape)
+        )
+    }
+}
 
 @Composable
 fun TopBar(onFlip: () -> Unit, onFlashToggle: () -> Unit, isFlashOn: Boolean) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 10.dp, start = 10.dp, end = 10.dp),
+            .statusBarsPadding()
+            .padding(start = 10.dp, end = 10.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -312,7 +375,6 @@ fun TopBar(onFlip: () -> Unit, onFlashToggle: () -> Unit, isFlashOn: Boolean) {
 @Composable
 fun RecordBar(
     selectedTab: String,
-    isRecording: Boolean,
     onRecordClick: () -> Unit,
     onPhotoClick: () -> Unit
 ) {
@@ -353,21 +415,10 @@ fun RecordBar(
                     tint = Color.Unspecified
                 )
             } else if (selectedTab == "Clips") {
-                if (!isRecording) {
-                    Icon(
-                        painter = painterResource(id = R.drawable.camera_shutter),
-                        contentDescription = "Stop Recording",
-                        modifier = Modifier.size(70.dp),
-                        tint = Color.Unspecified
-                    )
-                } else {
-                    Icon(
-                        painter = painterResource(id = R.drawable.ic_record),
-                        contentDescription = "Start Recording",
-                        modifier = Modifier.size(70.dp),
-                        tint = Color.Unspecified
-                    )
-                }
+                SegmentRecordButton(
+                    onStartRecording = { Log.d("RECORD", "Start") },
+                    onStopRecording = { Log.d("RECORD", "Stop") }
+                )
             }
         }
 
