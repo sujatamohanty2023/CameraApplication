@@ -8,9 +8,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -23,7 +23,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -51,6 +50,8 @@ fun CameraScreen() {
     var cameraPermissionGranted by remember { mutableStateOf(false) }
     var previewView: PreviewView? by remember { mutableStateOf(null) }
     var cameraProvider by remember { mutableStateOf<ProcessCameraProvider?>(null) }
+    var isRecording by remember { mutableStateOf(false) }
+    var isPaused by remember { mutableStateOf(false) }
 
     // Request camera permission
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
@@ -102,23 +103,26 @@ fun CameraScreen() {
                     isFlashOn = !isFlashOn
                     cameraControl?.enableTorch(isFlashOn)
                 },
-                isFlashOn = isFlashOn
+                isFlashOn = isFlashOn,
+                visible = !isRecording && !isPaused
             )
         }
 
         // Right side controls
-        Column(
-            modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .padding(end = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            SideControl(icon = R.drawable.filter, label = "Filter")
-            SideControl(icon = R.drawable.beautify, label = "Beaut.")
-            SideControl(icon = R.drawable.timer, label = "Timer")
-            SideControl(icon = R.drawable.speed, label = "Speed")
-            SideControl(icon = R.drawable.template, label = "Template")
+        if (!isRecording && !isPaused) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(end = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                SideControl(icon = R.drawable.filter, label = "Filter")
+                SideControl(icon = R.drawable.beautify, label = "Beaut.")
+                SideControl(icon = R.drawable.timer, label = "Timer")
+                SideControl(icon = R.drawable.speed, label = "Speed")
+                SideControl(icon = R.drawable.template, label = "Template")
+            }
         }
 
         // Bottom controls
@@ -129,27 +133,43 @@ fun CameraScreen() {
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             if (selectedTab != "Live") {
-                RecordBar(
+               RecordBar(
                     selectedTab = selectedTab,
-                    onRecordClick = {
-                    },
+                    onRecordClick = { },
                     onPhotoClick = {
                         Log.d("CameraScreen", "Photo captured")
-                        // Add actual photo capture logic here
+                    },
+                    isRecording = isRecording,
+                    isPaused = isPaused,
+                    onStartRecording = {
+                        isRecording = true
+                        isPaused = false
+                    },
+                    onPauseRecording = {
+                        isPaused = true
+                    },
+                    onResumeRecording = {
+                        isPaused = false
+                    },
+                    onStopRecording = {
+                        isRecording = false
+                        isPaused = false
                     }
                 )
             }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center
-            ) {
-                tabs.forEach { tab ->
-                    BottomControl(
-                        label = tab,
-                        highlight = (selectedTab == tab),
-                        onClick = { selectedTab = tab }
-                    )
+            if (!isRecording && !isPaused) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    tabs.forEach { tab ->
+                        BottomControl(
+                            label = tab,
+                            highlight = (selectedTab == tab),
+                            onClick = { selectedTab = tab }
+                        )
+                    }
                 }
             }
         }
@@ -158,14 +178,16 @@ fun CameraScreen() {
 @Composable
 fun SegmentRecordButton(
     modifier: Modifier = Modifier,
+    isRecording: Boolean,
+    isPaused: Boolean,
     maxDurationMs: Long = 15000L,
     onStartRecording: () -> Unit = {},
+    onPauseRecording: () -> Unit = {},
+    onResumeRecording: () -> Unit = {},
     onStopRecording: () -> Unit = {}
 ) {
-    var isRecording by remember { mutableStateOf(false) }
-    var isPaused by remember { mutableStateOf(false) }
     val segments = remember { mutableStateListOf<Float>() }
-    val whiteSeparators = remember { mutableStateListOf<Float>() } // Angle for white lines
+    val whiteSeparators = remember { mutableStateListOf<Float>() }
     var currentSegmentProgress by remember { mutableFloatStateOf(0f) }
     val coroutineScope = rememberCoroutineScope()
     var recordingJob by remember { mutableStateOf<Job?>(null) }
@@ -174,86 +196,71 @@ fun SegmentRecordButton(
         Log.d("SegmentRecordButton", "Stopping recording: $reason")
         recordingJob?.cancel()
         recordingJob = null
-        isRecording = false
-        isPaused = false
         if (currentSegmentProgress > 0f) {
             segments.add(currentSegmentProgress)
-            val whiteAngle = segments.sum() * 360f
-            whiteSeparators.add(whiteAngle)
+            whiteSeparators.add(segments.sum() * 360f)
             currentSegmentProgress = 0f
             onStopRecording()
         }
     }
 
+    fun startSegment() {
+        onStartRecording()
+        recordingJob = coroutineScope.launch {
+            val startTime = SystemClock.elapsedRealtime()
+            while (isActive) {
+                val now = SystemClock.elapsedRealtime()
+                val elapsed = now - startTime
+                currentSegmentProgress = (elapsed / maxDurationMs.toFloat()).coerceAtMost(1f)
+                val totalProgress = segments.sum() + currentSegmentProgress
+                if (totalProgress >= 1f) {
+                    stopRecording("Auto - Max Duration Reached")
+                    break
+                }
+                delay(16)
+            }
+        }
+    }
+
+    fun pauseSegment() {
+        onPauseRecording()
+        recordingJob?.cancel()
+        recordingJob = null
+        if (currentSegmentProgress > 0f) {
+            segments.add(currentSegmentProgress)
+            whiteSeparators.add(segments.sum() * 360f)
+            currentSegmentProgress = 0f
+        }
+        onStopRecording()
+    }
+
+    fun resumeSegment() {
+        onResumeRecording()
+        startSegment()
+    }
+    // Animate outer box size smoothly
+    val outerSize by animateDpAsState(targetValue = if (!isRecording && !isPaused) 70.dp else 100.dp)
+    // Animate inner circle size smoothly
+    val innerSize by animateDpAsState(targetValue = if (!isRecording && !isPaused) 50.dp else 70.dp)
+
     Box(
         contentAlignment = Alignment.Center,
         modifier = modifier
-            .size(100.dp)
+            // Zoom the button here by increasing size
+            .size(outerSize)  // Changed from 100.dp to 120.dp for zoom effect
             .clickable {
                 when {
-                    !isRecording -> {
-                        isRecording = true
-                        isPaused = false
-                        onStartRecording()
-                        recordingJob = coroutineScope.launch {
-                            val startTime = SystemClock.elapsedRealtime()
-                            while (isActive) {
-                                val now = SystemClock.elapsedRealtime()
-                                val elapsed = now - startTime
-                                currentSegmentProgress = (elapsed / maxDurationMs.toFloat()).coerceAtMost(1f)
-
-                                val totalProgress = segments.sum() + currentSegmentProgress
-                                if (totalProgress >= 1f) {
-                                    stopRecording("Auto - Max Duration Reached")
-                                    break
-                                }
-
-                                delay(16)
-                            }
-                        }
-                    }
-
-                    isRecording && !isPaused -> {
-                        // Pause
-                        isPaused = true
-                        recordingJob?.cancel()
-                        recordingJob = null
-                        if (currentSegmentProgress > 0f) {
-                            segments.add(currentSegmentProgress)
-                            val whiteAngle = segments.sum() * 360f
-                            whiteSeparators.add(whiteAngle)
-                            currentSegmentProgress = 0f
-                        }
-                    }
-
-                    isRecording && isPaused -> {
-                        // Resume
-                        isPaused = false
-                        recordingJob = coroutineScope.launch {
-                            val startTime = SystemClock.elapsedRealtime()
-                            while (isActive) {
-                                val now = SystemClock.elapsedRealtime()
-                                val elapsed = now - startTime
-                                currentSegmentProgress = (elapsed / maxDurationMs.toFloat()).coerceAtMost(1f)
-
-                                val totalProgress = segments.sum() + currentSegmentProgress
-                                if (totalProgress >= 1f) {
-                                    stopRecording("Auto - Max Duration Reached")
-                                    break
-                                }
-
-                                delay(16)
-                            }
-                        }
-                    }
+                    !isRecording -> startSegment()
+                    isRecording && !isPaused -> pauseSegment()
+                    isRecording && isPaused -> resumeSegment()
                 }
             }
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
-            val stroke = 8.dp.toPx()
+            val stroke = if(!isRecording && !isPaused) 8.dp.toPx() else 12.dp.toPx()
             var startAngle = -90f
 
-            // Draw all red segments
+            // Draw previous segments
             segments.forEach { segment ->
                 val sweep = 360f * segment
                 drawArc(
@@ -266,7 +273,7 @@ fun SegmentRecordButton(
                 startAngle += sweep
             }
 
-            // Draw current red segment (if recording and not paused)
+            // Draw current segment progress if recording and not paused
             if (isRecording && !isPaused && currentSegmentProgress > 0f) {
                 val sweep = 360f * currentSegmentProgress
                 drawArc(
@@ -279,18 +286,19 @@ fun SegmentRecordButton(
                 startAngle += sweep
             }
 
-            // Draw white separator lines at segment ends (pause points)
-            whiteSeparators.forEach { angle ->
-                drawArc(
-                    color = Color.LightGray,
-                    startAngle = -90f + angle,
-                    sweepAngle = 3f,
-                    useCenter = false,
-                    style = Stroke(width = stroke)
-                )
+            // **Hide white separators when recording or paused**
+            if (!isRecording && !isPaused) {
+                whiteSeparators.forEach { angle ->
+                    drawArc(
+                        color = Color.LightGray,
+                        startAngle = -90f + angle,
+                        sweepAngle = 3f,
+                        useCenter = false,
+                        style = Stroke(width = stroke)
+                    )
+                }
             }
 
-            // Draw remaining arc as white (not yet recorded)
             val totalProgress = segments.sum() + currentSegmentProgress
             val remaining = 360f - (360f * totalProgress)
             if (remaining > 0f) {
@@ -304,25 +312,22 @@ fun SegmentRecordButton(
             }
         }
 
-        // Button UI (Red = recording, Gray = paused, White = idle)
         Box(
             modifier = Modifier
-                .size(50.dp)
+                .size(innerSize)  // Increased from 50.dp for better zoom effect
                 .clip(CircleShape)
                 .background(
                     when {
-                        //isRecording && isPaused -> Color.Gray
                         isRecording -> Color.Red
                         else -> Color.White
                     }
                 )
-                .border(5.dp, Color.Transparent, CircleShape)
         )
     }
 }
 
 @Composable
-fun TopBar(onFlip: () -> Unit, onFlashToggle: () -> Unit, isFlashOn: Boolean) {
+fun TopBar(onFlip: () -> Unit, onFlashToggle: () -> Unit, isFlashOn: Boolean,visible: Boolean) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -339,35 +344,42 @@ fun TopBar(onFlip: () -> Unit, onFlashToggle: () -> Unit, isFlashOn: Boolean) {
         ) {
             Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White, modifier = Modifier.size(20.dp))
         }
-        Row(
-            modifier = Modifier
-                .background(Color.Black.copy(alpha = 0.3f), shape = RoundedCornerShape(20.dp))
-                .padding(horizontal = 15.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                painter = painterResource(id = R.drawable.music),
-                contentDescription = "music",
-                tint = Color.White,
-                modifier = Modifier.size(18.dp)
-            )
-            Spacer(modifier = Modifier.width(6.dp))
-            Text("Add Sound", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Medium)
-        }
-        Row {
-            Icon(
-                painter = painterResource(id = R.drawable.flip),
-                contentDescription = "Flip Camera",
-                tint = Color.White,
-                modifier = Modifier.size(24.dp).clickable { onFlip() }
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Icon(
-                painter = painterResource(id = R.drawable.flash),
-                contentDescription = "Flash",
-                tint = if (isFlashOn) Color.Yellow else Color.White,
-                modifier = Modifier.size(24.dp).clickable { onFlashToggle() }
-            )
+        if (visible) {
+            Row(
+                modifier = Modifier
+                    .background(Color.Black.copy(alpha = 0.3f), shape = RoundedCornerShape(20.dp))
+                    .padding(horizontal = 15.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    painter = painterResource(id = R.drawable.music),
+                    contentDescription = "music",
+                    tint = Color.White,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    "Add Sound",
+                    color = Color.White,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+            Row {
+                Icon(
+                    painter = painterResource(id = R.drawable.flip),
+                    contentDescription = "Flip Camera",
+                    tint = Color.White,
+                    modifier = Modifier.size(24.dp).clickable { onFlip() }
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Icon(
+                    painter = painterResource(id = R.drawable.flash),
+                    contentDescription = "Flash",
+                    tint = if (isFlashOn) Color.Yellow else Color.White,
+                    modifier = Modifier.size(24.dp).clickable { onFlashToggle() }
+                )
+            }
         }
     }
 }
@@ -376,7 +388,13 @@ fun TopBar(onFlip: () -> Unit, onFlashToggle: () -> Unit, isFlashOn: Boolean) {
 fun RecordBar(
     selectedTab: String,
     onRecordClick: () -> Unit,
-    onPhotoClick: () -> Unit
+    onPhotoClick: () -> Unit,
+    isRecording: Boolean,
+    isPaused: Boolean,
+    onStartRecording: () -> Unit,
+    onPauseRecording: () -> Unit,
+    onResumeRecording: () -> Unit,
+    onStopRecording: () -> Unit
 ) {
     Row(
         modifier = Modifier
@@ -385,26 +403,32 @@ fun RecordBar(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(
-                painter = painterResource(id = R.drawable.effect),
-                contentDescription = "Effects",
-                tint = Color.White,
-                modifier = Modifier.size(32.dp)
-            )
-            Text("Effects", color = Color.White, fontSize = 12.sp)
+        if (!isRecording && !isPaused) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.clickable {
+                    // You can add your effects click handler here if needed
+                }
+            ) {
+                Icon(
+                    painter = painterResource(id = R.drawable.effect),
+                    contentDescription = "Effects",
+                    tint = Color.White,
+                    modifier = Modifier.size(32.dp)
+                )
+                Text("Effects", color = Color.White, fontSize = 12.sp)
+            }
+        } else {
+            Spacer(modifier = Modifier.width(0.dp))  // Optional: to keep code symmetry but no space reserved
         }
 
         Box(
             modifier = Modifier
-                .size(70.dp)
                 .clickable {
                     if (selectedTab == "Photo") {
                         onPhotoClick()
-                    } else if (selectedTab == "Clips") {
-                        onRecordClick()
                     }
-                },
+                }
+            .padding(bottom =if(!isRecording && !isPaused) 0.dp else 100.dp),
             contentAlignment = Alignment.Center
         ) {
             if (selectedTab == "Photo") {
@@ -416,25 +440,36 @@ fun RecordBar(
                 )
             } else if (selectedTab == "Clips") {
                 SegmentRecordButton(
-                    onStartRecording = { Log.d("RECORD", "Start") },
-                    onStopRecording = { Log.d("RECORD", "Stop") }
+                    isRecording = isRecording,
+                    isPaused = isPaused,
+                    onStartRecording = onStartRecording,
+                    onPauseRecording = onPauseRecording,
+                    onResumeRecording = onResumeRecording,
+                    onStopRecording = onStopRecording
                 )
             }
         }
 
-
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(
-                painter = painterResource(id = R.drawable.gallery),
-                contentDescription = "Gallery",
-                tint = Color.White,
-                modifier = Modifier.size(32.dp)
-            )
-            Text("Gallery", color = Color.White, fontSize = 12.sp)
+        if (!isRecording && !isPaused) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.clickable {
+                    // You can add your gallery click handler here if needed
+                }
+            ) {
+                Icon(
+                    painter = painterResource(id = R.drawable.gallery),
+                    contentDescription = "Gallery",
+                    tint = Color.White,
+                    modifier = Modifier.size(32.dp)
+                )
+                Text("Gallery", color = Color.White, fontSize = 12.sp)
+            }
+        } else {
+            Spacer(modifier = Modifier.width(0.dp))
         }
     }
-}
 
+}
 
 fun bindCameraUseCases(
     cameraProvider: ProcessCameraProvider,
