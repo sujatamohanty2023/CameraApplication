@@ -1,12 +1,24 @@
 package com.example.myapplication
 
 import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
 import android.os.SystemClock
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.RequiresPermission
+import androidx.camera.core.CameraControl
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.video.FileOutputOptions
+import androidx.camera.video.Quality
+import androidx.camera.video.QualitySelector
+import androidx.camera.video.Recorder
+import androidx.camera.video.Recording
+import androidx.camera.video.VideoCapture
+import androidx.camera.video.VideoRecordEvent
 import androidx.camera.view.PreviewView
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.Canvas
@@ -19,6 +31,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -31,14 +44,19 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.LifecycleOwner
+import androidx.navigation.NavHostController
+import androidx.navigation.compose.rememberNavController
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.io.File
 
 @Composable
-fun CameraScreen() {
+fun CameraScreen(navController: NavHostController) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
@@ -46,12 +64,14 @@ fun CameraScreen() {
     var selectedTab by remember { mutableStateOf("Clips") }
     var lensFacing by remember { mutableIntStateOf(CameraSelector.LENS_FACING_FRONT) }
     var isFlashOn by remember { mutableStateOf(false) }
-    var cameraControl by remember { mutableStateOf<androidx.camera.core.CameraControl?>(null) }
+    var cameraControl by remember { mutableStateOf<CameraControl?>(null) }
     var cameraPermissionGranted by remember { mutableStateOf(false) }
     var previewView: PreviewView? by remember { mutableStateOf(null) }
     var cameraProvider by remember { mutableStateOf<ProcessCameraProvider?>(null) }
     var isRecording by remember { mutableStateOf(false) }
     var isPaused by remember { mutableStateOf(false) }
+    var videoCapture by remember { mutableStateOf<VideoCapture<Recorder>?>(null) }
+    val segmentFiles = remember { mutableStateListOf<File>() }
 
     // Request camera permission
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
@@ -74,8 +94,10 @@ fun CameraScreen() {
                 previewView!!,
                 lensFacing,
                 lifecycleOwner,
-                isFlashOn
-            ) { control -> cameraControl = control }
+                isFlashOn,
+                onCameraControlAvailable = { cameraControl = it },
+                onVideoCaptureReady = { videoCapture = it }
+            )
         }
     }
 
@@ -117,11 +139,29 @@ fun CameraScreen() {
                 verticalArrangement = Arrangement.spacedBy(20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                SideControl(icon = R.drawable.filter, label = "Filter")
-                SideControl(icon = R.drawable.beautify, label = "Beaut.")
-                SideControl(icon = R.drawable.timer, label = "Timer")
-                SideControl(icon = R.drawable.speed, label = "Speed")
-                SideControl(icon = R.drawable.template, label = "Template")
+                SideControl(
+                    icon = R.drawable.filter,
+                    label = "Filter",
+                    segmentFiles = segmentFiles,
+                    navController = navController,
+                )
+                SideControl(
+                    icon = R.drawable.beautify,
+                    label = "Beaut.",
+                    segmentFiles = segmentFiles,
+                    navController = navController,
+                )
+                SideControl(icon = R.drawable.timer, label = "Timer", segmentFiles = segmentFiles, navController = navController,)
+                SideControl(icon = R.drawable.speed, label = "Speed", segmentFiles = segmentFiles, navController = navController,)
+                SideControl(
+                    icon = R.drawable.template,
+                    label = "Template",
+                    segmentFiles = segmentFiles,
+                    navController = navController,
+                )
+                if (segmentFiles.isNotEmpty()) {
+                    SideControl(icon = R.drawable.complete, label = "Complete",segmentFiles = segmentFiles,navController=navController)
+                }
             }
         }
 
@@ -141,6 +181,8 @@ fun CameraScreen() {
                     },
                     isRecording = isRecording,
                     isPaused = isPaused,
+                    videoCapture=videoCapture,
+                   segmentFiles=segmentFiles,
                     onStartRecording = {
                         isRecording = true
                         isPaused = false
@@ -180,6 +222,9 @@ fun SegmentRecordButton(
     modifier: Modifier = Modifier,
     isRecording: Boolean,
     isPaused: Boolean,
+    videoCapture: VideoCapture<Recorder>?,
+    segmentFiles: SnapshotStateList<File>,
+    context: Context,
     maxDurationMs: Long = 15000L,
     onStartRecording: () -> Unit = {},
     onPauseRecording: () -> Unit = {},
@@ -191,6 +236,8 @@ fun SegmentRecordButton(
     var currentSegmentProgress by remember { mutableFloatStateOf(0f) }
     val coroutineScope = rememberCoroutineScope()
     var recordingJob by remember { mutableStateOf<Job?>(null) }
+    var currentRecording by remember { mutableStateOf<Recording?>(null) }
+    var recordingStartTime by remember { mutableStateOf(0L) }
 
     fun stopRecording(reason: String = "Manual") {
         Log.d("SegmentRecordButton", "Stopping recording: $reason")
@@ -203,9 +250,51 @@ fun SegmentRecordButton(
             onStopRecording()
         }
     }
-
+    @RequiresPermission(Manifest.permission.RECORD_AUDIO)
     fun startSegment() {
+        // 1. Start actual video file recording
+        val segmentName = "segment_${System.currentTimeMillis()}.mp4"
+        val file = File(context.cacheDir, segmentName)
+        val outputOptions = FileOutputOptions.Builder(file).build()
+
+        if (ActivityCompat.checkSelfPermission(
+                context,
+                Manifest.permission.RECORD_AUDIO
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+        recordingStartTime = SystemClock.elapsedRealtime()
+        val prepared = videoCapture?.output
+            ?.prepareRecording(context, outputOptions)
+            ?.withAudioEnabled()
+
+        if (prepared == null) {
+            Log.e("Recording", "prepareRecording returned null")
+            return
+        }
+        currentRecording = prepared.start(ContextCompat.getMainExecutor(context)) { event ->
+                when (event) {
+                    is VideoRecordEvent.Start -> {
+                        Log.d("Recording", "Recording started")
+                    }
+
+                    is VideoRecordEvent.Finalize -> {
+                        if (event.hasError()) {
+                            Log.e("Recording", "Recording error: ${event.error}, cause: ${event.cause}, message: ${event.cause?.message}")
+                        } else {
+                            Log.d("Recording", "Saved segment: ${file.absolutePath}")
+                            segmentFiles.add(file)  // Save for later merging
+                        }
+                        currentRecording = null
+                        onStopRecording()
+                    }
+                }
+            }
+
+        // 2. Update UI state and start progress job
         onStartRecording()
+
         recordingJob = coroutineScope.launch {
             val startTime = SystemClock.elapsedRealtime()
             while (isActive) {
@@ -213,27 +302,42 @@ fun SegmentRecordButton(
                 val elapsed = now - startTime
                 currentSegmentProgress = (elapsed / maxDurationMs.toFloat()).coerceAtMost(1f)
                 val totalProgress = segments.sum() + currentSegmentProgress
+
                 if (totalProgress >= 1f) {
                     stopRecording("Auto - Max Duration Reached")
                     break
                 }
+
                 delay(16)
             }
         }
     }
-
-    fun pauseSegment() {
-        onPauseRecording()
-        recordingJob?.cancel()
-        recordingJob = null
+    fun finishPause() {
         if (currentSegmentProgress > 0f) {
             segments.add(currentSegmentProgress)
             whiteSeparators.add(segments.sum() * 360f)
             currentSegmentProgress = 0f
         }
-        onStopRecording()
-    }
 
+        currentRecording?.stop()
+    }
+    fun pauseSegment() {
+        onPauseRecording()
+        recordingJob?.cancel()
+        recordingJob = null
+
+        val minDurationMs = 500L
+        val elapsed = SystemClock.elapsedRealtime() - recordingStartTime
+
+        if (elapsed < minDurationMs) {
+            coroutineScope.launch {
+                delay(minDurationMs - elapsed)
+                finishPause()
+            }
+        } else {
+            finishPause()
+        }
+    }
     fun resumeSegment() {
         onResumeRecording()
         startSegment()
@@ -391,10 +495,12 @@ fun RecordBar(
     onPhotoClick: () -> Unit,
     isRecording: Boolean,
     isPaused: Boolean,
+    videoCapture: VideoCapture<Recorder>?,
     onStartRecording: () -> Unit,
     onPauseRecording: () -> Unit,
     onResumeRecording: () -> Unit,
-    onStopRecording: () -> Unit
+    onStopRecording: () -> Unit,
+    segmentFiles: SnapshotStateList<File>,
 ) {
     Row(
         modifier = Modifier
@@ -442,6 +548,9 @@ fun RecordBar(
                 SegmentRecordButton(
                     isRecording = isRecording,
                     isPaused = isPaused,
+                    videoCapture = videoCapture,
+                    segmentFiles = segmentFiles,
+                    context = LocalContext.current,
                     onStartRecording = onStartRecording,
                     onPauseRecording = onPauseRecording,
                     onResumeRecording = onResumeRecording,
@@ -475,13 +584,18 @@ fun bindCameraUseCases(
     cameraProvider: ProcessCameraProvider,
     previewView: PreviewView,
     lensFacing: Int,
-    lifecycleOwner: androidx.lifecycle.LifecycleOwner,
+    lifecycleOwner: LifecycleOwner,
     flashOn: Boolean,
-    onCameraControlAvailable: (androidx.camera.core.CameraControl) -> Unit
+    onCameraControlAvailable: (CameraControl) -> Unit,
+    onVideoCaptureReady: (VideoCapture<Recorder>) -> Unit
 ) {
-    val preview = androidx.camera.core.Preview.Builder().build().apply {
+    val preview = Preview.Builder().build().apply {
         setSurfaceProvider(previewView.surfaceProvider)
     }
+    val recorder = Recorder.Builder()
+        .setQualitySelector(QualitySelector.from(Quality.HIGHEST))
+        .build()
+    val videoCapture = VideoCapture.withOutput(recorder)
 
     val cameraSelector = CameraSelector.Builder()
         .requireLensFacing(lensFacing)
@@ -492,24 +606,34 @@ fun bindCameraUseCases(
         val camera = cameraProvider.bindToLifecycle(lifecycleOwner, cameraSelector, preview)
         onCameraControlAvailable(camera.cameraControl)
         camera.cameraControl.enableTorch(flashOn)
+        onVideoCaptureReady(videoCapture)
     } catch (exc: Exception) {
         Log.e("CameraX", "Use case binding failed", exc)
     }
 }
 
 @Composable
-fun SideControl(icon: Int, label: String) {
+fun SideControl(
+    icon: Int,
+    label: String,
+    segmentFiles: SnapshotStateList<File>,
+    navController: NavHostController
+) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Icon(
             painter = painterResource(id = icon),
             contentDescription = label,
             tint = Color.White,
-            modifier = Modifier.size(24.dp).clickable { }
+            modifier = Modifier.size(24.dp).clickable {
+                if(label=="Complete"){
+                    val paths = segmentFiles.joinToString(",") { it.absolutePath }
+                    navController.navigate("videoPlayer?paths=$paths")
+                }
+            }
         )
         Text(label, color = Color.White, fontSize = 12.sp)
     }
 }
-
 @Composable
 fun BottomControl(label: String, highlight: Boolean = false, onClick: () -> Unit) {
     Column(
