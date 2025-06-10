@@ -1,12 +1,27 @@
 package com.example.myapplication
 
 import android.Manifest
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Environment
 import android.os.SystemClock
 import android.util.Log
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.core.CameraControl
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.video.FileOutputOptions
+import androidx.camera.video.Quality
+import androidx.camera.video.QualitySelector
+import androidx.camera.video.Recorder
+import androidx.camera.video.Recording
+import androidx.camera.video.VideoCapture
+import androidx.camera.video.VideoRecordEvent
 import androidx.camera.view.PreviewView
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.Canvas
@@ -32,10 +47,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.io.File
 
 @Composable
 fun CameraScreen() {
@@ -46,20 +63,35 @@ fun CameraScreen() {
     var selectedTab by remember { mutableStateOf("Clips") }
     var lensFacing by remember { mutableIntStateOf(CameraSelector.LENS_FACING_FRONT) }
     var isFlashOn by remember { mutableStateOf(false) }
-    var cameraControl by remember { mutableStateOf<androidx.camera.core.CameraControl?>(null) }
+    var cameraControl by remember { mutableStateOf<CameraControl?>(null) }
     var cameraPermissionGranted by remember { mutableStateOf(false) }
     var previewView: PreviewView? by remember { mutableStateOf(null) }
     var cameraProvider by remember { mutableStateOf<ProcessCameraProvider?>(null) }
     var isRecording by remember { mutableStateOf(false) }
     var isPaused by remember { mutableStateOf(false) }
 
-    // Request camera permission
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
-        cameraPermissionGranted = it
+    val outputSegments = remember { mutableStateListOf<Uri>() }
+    var videoCapture by remember { mutableStateOf<VideoCapture<Recorder>?>(null) }
+    var recording by remember { mutableStateOf<Recording?>(null) }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        cameraPermissionGranted =
+            permissions[Manifest.permission.CAMERA] == true &&
+                    permissions[Manifest.permission.RECORD_AUDIO] == true &&
+                    permissions[Manifest.permission.WRITE_EXTERNAL_STORAGE] == true
     }
 
+
     LaunchedEffect(Unit) {
-        launcher.launch(Manifest.permission.CAMERA)
+        permissionLauncher.launch(
+            arrayOf(
+                Manifest.permission.CAMERA,
+                Manifest.permission.RECORD_AUDIO,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE
+            )
+        )
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
         cameraProviderFuture.addListener({
             cameraProvider = cameraProviderFuture.get()
@@ -74,8 +106,10 @@ fun CameraScreen() {
                 previewView!!,
                 lensFacing,
                 lifecycleOwner,
-                isFlashOn
-            ) { control -> cameraControl = control }
+                isFlashOn,
+                onCameraControlAvailable = { cameraControl = it },
+                onVideoCaptureReady = { videoCapture = it }
+            )
         }
     }
 
@@ -142,16 +176,71 @@ fun CameraScreen() {
                     isRecording = isRecording,
                     isPaused = isPaused,
                     onStartRecording = {
+                        val hasCameraPermission = ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.CAMERA
+                        ) == PackageManager.PERMISSION_GRANTED
+
+                        val hasMicPermission = ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.RECORD_AUDIO
+                        ) == PackageManager.PERMISSION_GRANTED
+
+                        val hasWritePermission = ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.WRITE_EXTERNAL_STORAGE
+                        ) == PackageManager.PERMISSION_GRANTED
+
+                        if (!hasCameraPermission || !hasMicPermission || !hasWritePermission) {
+                            Toast.makeText(context, "Permissions missing", Toast.LENGTH_SHORT).show()
+                            return@RecordBar
+                        }
+
+                        val dir = context.getExternalFilesDir(Environment.DIRECTORY_MOVIES)
+                        dir?.mkdirs()
+                        val name = "segment_${System.currentTimeMillis()}.mp4"
+                        val file = File(dir, name)
+                        val outputOptions = FileOutputOptions.Builder(file).build()
+
+                        val pendingRecording = videoCapture?.output
+                            ?.prepareRecording(context, outputOptions)
+
+                            val finalRecording =  try {
+                                pendingRecording?.withAudioEnabled()
+                            } catch (e: SecurityException) {
+                                Log.e("VideoCapture", "SecurityException: Missing RECORD_AUDIO permission", e)
+                                pendingRecording
+                            }
+
+                        val recordingSession = finalRecording?.start(ContextCompat.getMainExecutor(context)) { event ->
+                            if (event is VideoRecordEvent.Finalize) {
+                                if (event.hasError()) {
+                                    Log.e("VideoCapture", "Recording error: ${event.error}")
+                                } else {
+                                    outputSegments.add(event.outputResults.outputUri)
+                                    Log.d("VideoCapture", "Saved at: ${file.absolutePath}")
+                                    showFileExistsToast(context, file)
+                                    openVideoWithFileProvider(context, file)
+                                }
+                            }
+                        }
+
+                        recording = recordingSession
                         isRecording = true
                         isPaused = false
+
                     },
                     onPauseRecording = {
+                        recording?.pause()
                         isPaused = true
                     },
                     onResumeRecording = {
+                        recording?.resume()
                         isPaused = false
                     },
                     onStopRecording = {
+                        recording?.stop()
+                        recording = null
                         isRecording = false
                         isPaused = false
                     }
@@ -175,6 +264,33 @@ fun CameraScreen() {
         }
     }
 }
+// Helper function to show toast when file exists
+private fun showFileExistsToast(context: Context, file: File) {
+    if (file.exists()) {
+        Toast.makeText(context, "File created: ${file.name}", Toast.LENGTH_LONG).show()
+    } else {
+        Toast.makeText(context, "File NOT created", Toast.LENGTH_LONG).show()
+    }
+}
+private fun openVideoWithFileProvider(context: Context, file: File) {
+    val uri = FileProvider.getUriForFile(
+        context,
+        "${context.packageName}.fileprovider",
+        file
+    )
+
+    val intent = Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(uri, "video/mp4")
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+
+    if (intent.resolveActivity(context.packageManager) != null) {
+        context.startActivity(intent)
+    } else {
+        Toast.makeText(context, "No app available to view video", Toast.LENGTH_SHORT).show()
+    }
+}
+
 @Composable
 fun SegmentRecordButton(
     modifier: Modifier = Modifier,
@@ -477,11 +593,17 @@ fun bindCameraUseCases(
     lensFacing: Int,
     lifecycleOwner: androidx.lifecycle.LifecycleOwner,
     flashOn: Boolean,
-    onCameraControlAvailable: (androidx.camera.core.CameraControl) -> Unit
+    onCameraControlAvailable: (CameraControl) -> Unit,
+    onVideoCaptureReady: (VideoCapture<Recorder>) -> Unit
 ) {
-    val preview = androidx.camera.core.Preview.Builder().build().apply {
+    val preview = Preview.Builder().build().apply {
         setSurfaceProvider(previewView.surfaceProvider)
     }
+
+    val recorder = Recorder.Builder()
+        .setQualitySelector(QualitySelector.from(Quality.HIGHEST))
+        .build()
+    val videoCapture = VideoCapture.withOutput(recorder)
 
     val cameraSelector = CameraSelector.Builder()
         .requireLensFacing(lensFacing)
@@ -492,6 +614,7 @@ fun bindCameraUseCases(
         val camera = cameraProvider.bindToLifecycle(lifecycleOwner, cameraSelector, preview)
         onCameraControlAvailable(camera.cameraControl)
         camera.cameraControl.enableTorch(flashOn)
+        onVideoCaptureReady(videoCapture)
     } catch (exc: Exception) {
         Log.e("CameraX", "Use case binding failed", exc)
     }
