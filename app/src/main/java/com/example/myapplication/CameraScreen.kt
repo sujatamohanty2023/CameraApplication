@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Environment
 import android.os.SystemClock
 import android.util.Log
@@ -48,6 +49,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.navigation.NavHostController
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -55,7 +57,7 @@ import kotlinx.coroutines.launch
 import java.io.File
 
 @Composable
-fun CameraScreen() {
+fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
@@ -74,33 +76,34 @@ fun CameraScreen() {
     var videoCapture by remember { mutableStateOf<VideoCapture<Recorder>?>(null) }
     var recording by remember { mutableStateOf<Recording?>(null) }
 
+    val requiredPermissions = remember {
+        mutableStateListOf(
+            Manifest.permission.CAMERA,
+            Manifest.permission.RECORD_AUDIO
+        ).apply {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                add(Manifest.permission.READ_MEDIA_VIDEO)
+            } else {
+                add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            }
+        }
+    }
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { permissions ->
-        cameraPermissionGranted =
-            permissions[Manifest.permission.CAMERA] == true &&
-                    permissions[Manifest.permission.RECORD_AUDIO] == true &&
-                    permissions[Manifest.permission.WRITE_EXTERNAL_STORAGE] == true
+        cameraPermissionGranted = requiredPermissions.all {
+            permissions[it] == true
+        }
     }
-
-
     LaunchedEffect(Unit) {
-        permissionLauncher.launch(
-            arrayOf(
-                Manifest.permission.CAMERA,
-                Manifest.permission.RECORD_AUDIO,
-                Manifest.permission.WRITE_EXTERNAL_STORAGE
-            )
-        )
+        permissionLauncher.launch(requiredPermissions.toTypedArray())
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
         cameraProviderFuture.addListener({
             cameraProvider = cameraProviderFuture.get()
         }, ContextCompat.getMainExecutor(context))
     }
-
-    // Bind camera use cases on relevant state changes
-    LaunchedEffect(lensFacing, previewView, cameraProvider, isFlashOn) {
-        if (cameraProvider != null && previewView != null) {
+    LaunchedEffect(cameraPermissionGranted, lensFacing, previewView, cameraProvider, isFlashOn) {
+        if (cameraPermissionGranted && cameraProvider != null && previewView != null) {
             bindCameraUseCases(
                 cameraProvider!!,
                 previewView!!,
@@ -113,11 +116,13 @@ fun CameraScreen() {
         }
     }
 
+
     Box(modifier = Modifier.fillMaxSize()) {
         if (cameraPermissionGranted) {
             AndroidView(factory = { ctx ->
                 PreviewView(ctx).apply {
                     scaleType = PreviewView.ScaleType.FILL_CENTER
+                    setBackgroundColor(android.graphics.Color.BLACK)
                 }.also { previewView = it }
             }, modifier = Modifier.fillMaxSize())
         }
@@ -151,11 +156,18 @@ fun CameraScreen() {
                 verticalArrangement = Arrangement.spacedBy(20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                SideControl(icon = R.drawable.filter, label = "Filter")
-                SideControl(icon = R.drawable.beautify, label = "Beaut.")
-                SideControl(icon = R.drawable.timer, label = "Timer")
-                SideControl(icon = R.drawable.speed, label = "Speed")
-                SideControl(icon = R.drawable.template, label = "Template")
+                SideControl(icon = R.drawable.filter, label = "Filter",onClick = {})
+                SideControl(icon = R.drawable.beautify, label = "Beaut.",onClick = {})
+                SideControl(icon = R.drawable.timer, label = "Timer",onClick = {})
+                SideControl(icon = R.drawable.speed, label = "Speed",onClick = {})
+                SideControl(icon = R.drawable.template, label = "Template",onClick = {})
+                if (outputSegments.isNotEmpty()) {
+                    SideControl(icon = R.drawable.ic_check, label = "Done",
+                            onClick = {
+                        // Navigate to the video playback screen
+                        navController.navigate("video_playback_screen")
+                    })
+                }
             }
         }
 
@@ -176,22 +188,7 @@ fun CameraScreen() {
                     isRecording = isRecording,
                     isPaused = isPaused,
                     onStartRecording = {
-                        val hasCameraPermission = ContextCompat.checkSelfPermission(
-                            context,
-                            Manifest.permission.CAMERA
-                        ) == PackageManager.PERMISSION_GRANTED
-
-                        val hasMicPermission = ContextCompat.checkSelfPermission(
-                            context,
-                            Manifest.permission.RECORD_AUDIO
-                        ) == PackageManager.PERMISSION_GRANTED
-
-                        val hasWritePermission = ContextCompat.checkSelfPermission(
-                            context,
-                            Manifest.permission.WRITE_EXTERNAL_STORAGE
-                        ) == PackageManager.PERMISSION_GRANTED
-
-                        if (!hasCameraPermission || !hasMicPermission || !hasWritePermission) {
+                        if (!hasAllPermissions(context)) {
                             Toast.makeText(context, "Permissions missing", Toast.LENGTH_SHORT).show()
                             return@RecordBar
                         }
@@ -219,8 +216,7 @@ fun CameraScreen() {
                                 } else {
                                     outputSegments.add(event.outputResults.outputUri)
                                     Log.d("VideoCapture", "Saved at: ${file.absolutePath}")
-                                    showFileExistsToast(context, file)
-                                    openVideoWithFileProvider(context, file)
+                                    viewModel.addVideo(event.outputResults.outputUri)
                                 }
                             }
                         }
@@ -264,6 +260,23 @@ fun CameraScreen() {
         }
     }
 }
+fun hasAllPermissions(context: Context): Boolean {
+    val permissions = mutableListOf(
+        Manifest.permission.CAMERA,
+        Manifest.permission.RECORD_AUDIO
+    )
+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        permissions.add(Manifest.permission.READ_MEDIA_VIDEO)
+    } else {
+        permissions.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+    }
+
+    return permissions.all {
+        ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
+    }
+}
+
 // Helper function to show toast when file exists
 private fun showFileExistsToast(context: Context, file: File) {
     if (file.exists()) {
@@ -611,7 +624,7 @@ fun bindCameraUseCases(
 
     try {
         cameraProvider.unbindAll()
-        val camera = cameraProvider.bindToLifecycle(lifecycleOwner, cameraSelector, preview)
+        val camera = cameraProvider.bindToLifecycle(lifecycleOwner, cameraSelector, preview,videoCapture)
         onCameraControlAvailable(camera.cameraControl)
         camera.cameraControl.enableTorch(flashOn)
         onVideoCaptureReady(videoCapture)
@@ -621,13 +634,13 @@ fun bindCameraUseCases(
 }
 
 @Composable
-fun SideControl(icon: Int, label: String) {
+fun SideControl(icon: Int, label: String, onClick: () -> Unit) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Icon(
             painter = painterResource(id = icon),
             contentDescription = label,
             tint = Color.White,
-            modifier = Modifier.size(24.dp).clickable { }
+            modifier = Modifier.size(24.dp).clickable { onClick() }
         )
         Text(label, color = Color.White, fontSize = 12.sp)
     }
