@@ -1,5 +1,7 @@
 package com.example.myapplication
 
+import MusicPickerBottomSheet
+import MusicPickerScreen
 import android.Manifest
 import android.content.Context
 import android.content.Intent
@@ -76,6 +78,8 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
     var videoCapture by remember { mutableStateOf<VideoCapture<Recorder>?>(null) }
     var recording by remember { mutableStateOf<Recording?>(null) }
 
+    var showMusicPicker by remember { mutableStateOf(false) }
+
     val requiredPermissions = remember {
         mutableStateListOf(
             Manifest.permission.CAMERA,
@@ -143,7 +147,8 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
                     cameraControl?.enableTorch(isFlashOn)
                 },
                 isFlashOn = isFlashOn,
-                visible = !isRecording && !isPaused
+                visible = !isRecording && !isPaused,
+                onShowMusicPicker = { showMusicPicker = true }
             )
         }
 
@@ -257,6 +262,16 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
                     }
                 }
             }
+        }
+        if (showMusicPicker) {
+            MusicPickerScreen(
+                onDismiss = { showMusicPicker = false },
+                onSongSelected = { selectedSong ->
+                    Log.d("MusicPicker", "Selected: ${selectedSong.title}")
+                    showMusicPicker = false
+                    // You can pass selectedSong to ViewModel or use it directly
+                }
+            )
         }
     }
 }
@@ -456,7 +471,7 @@ fun SegmentRecordButton(
 }
 
 @Composable
-fun TopBar(onFlip: () -> Unit, onFlashToggle: () -> Unit, isFlashOn: Boolean,visible: Boolean) {
+fun TopBar(onFlip: () -> Unit, onFlashToggle: () -> Unit, isFlashOn: Boolean,visible: Boolean, onShowMusicPicker: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -477,7 +492,8 @@ fun TopBar(onFlip: () -> Unit, onFlashToggle: () -> Unit, isFlashOn: Boolean,vis
             Row(
                 modifier = Modifier
                     .background(Color.Black.copy(alpha = 0.3f), shape = RoundedCornerShape(20.dp))
-                    .padding(horizontal = 15.dp, vertical = 4.dp),
+                    .padding(horizontal = 15.dp, vertical = 4.dp)
+                    .clickable(onClick = onShowMusicPicker),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(
@@ -512,7 +528,6 @@ fun TopBar(onFlip: () -> Unit, onFlashToggle: () -> Unit, isFlashOn: Boolean,vis
         }
     }
 }
-
 @Composable
 fun RecordBar(
     selectedTab: String,

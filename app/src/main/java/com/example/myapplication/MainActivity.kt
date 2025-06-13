@@ -30,7 +30,7 @@ class MainActivity : ComponentActivity() {
                             CameraScreen(navController = navController, viewModel = viewModel)
                         }
                         composable("video_playback_screen") {
-                           // VideoPlaybackScreen(viewModel.recordedVideos.value)
+                            VideoPlaybackScreen(viewModel.recordedVideos.value)
                         }
                     }
                 }
