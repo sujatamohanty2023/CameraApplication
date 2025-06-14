@@ -1,7 +1,5 @@
 package com.example.myapplication
 
-import MusicPickerBottomSheet
-import MusicPickerScreen
 import android.Manifest
 import android.content.Context
 import android.content.Intent
@@ -51,6 +49,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.media3.common.MediaItem
+import androidx.media3.exoplayer.ExoPlayer
 import androidx.navigation.NavHostController
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -58,6 +58,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.File
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
     val context = LocalContext.current
@@ -79,6 +80,27 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
     var recording by remember { mutableStateOf<Recording?>(null) }
 
     var showMusicPicker by remember { mutableStateOf(false) }
+    var selectedMusic by remember { mutableStateOf<MusicItem?>(null) }
+    val exoPlayer = remember {
+        ExoPlayer.Builder(context).build()
+    }
+    var isMusicPlaying by remember { mutableStateOf(false) }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            exoPlayer.release()
+        }
+    }
+
+    LaunchedEffect(selectedMusic) {
+        selectedMusic?.let { music ->
+            exoPlayer.stop()
+            exoPlayer.setMediaItem(MediaItem.fromUri(music.audioUrl))
+            exoPlayer.prepare()
+            exoPlayer.play()
+            isMusicPlaying = true
+        }
+    }
 
     val requiredPermissions = remember {
         mutableStateListOf(
@@ -264,14 +286,30 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
             }
         }
         if (showMusicPicker) {
-            MusicPickerScreen(
-                onDismiss = { showMusicPicker = false },
-                onSongSelected = { selectedSong ->
-                    Log.d("MusicPicker", "Selected: ${selectedSong.title}")
-                    showMusicPicker = false
-                    // You can pass selectedSong to ViewModel or use it directly
+            MusicAppTheme {
+                var showBottomSheet by remember { mutableStateOf(true) }
+                if (showBottomSheet) {
+                    ModalBottomSheet(
+                        onDismissRequest = {
+                            showBottomSheet = false
+                            showMusicPicker = false
+                        },
+                        containerColor = Color(0xFF121212)
+                    ) {
+                        MusicBrowseScreen(
+                            onMusicSelected = { music ->
+                                selectedMusic = music
+                                showBottomSheet = false
+                                showMusicPicker = false
+                            },
+                            onBackPressed = {
+                                showBottomSheet = false
+                                showMusicPicker = false
+                            }
+                        )
+                    }
                 }
-            )
+            }
         }
     }
 }
