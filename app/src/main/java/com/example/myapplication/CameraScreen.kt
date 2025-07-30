@@ -724,3 +724,4 @@ fun BottomControl(label: String, highlight: Boolean = false, onClick: () -> Unit
         }
     }
 }
+

@@ -11,9 +11,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowForward
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -32,6 +30,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import coil.compose.rememberAsyncImagePainter
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 data class MusicItem(
     val title: String,
@@ -42,6 +41,7 @@ data class MusicItem(
     val audioUrl: String
 )
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MusicBrowseScreen(
     onMusicSelected: (MusicItem) -> Unit, // Callback to pass selected music to CameraScreen
@@ -91,6 +91,22 @@ fun MusicBrowseScreen(
     var currentPlayingItem by remember { mutableStateOf<MusicItem?>(null) }
     var isPlaying by remember { mutableStateOf(false) }
 
+    val coroutineScope = rememberCoroutineScope()
+    var showTrimmerSheet by remember { mutableStateOf(false) }
+    var selectedItemForTrimmer by remember { mutableStateOf<MusicItem?>(null) }
+
+    // ✅ Call the sheet **above Scaffold**
+    if (showTrimmerSheet && selectedItemForTrimmer != null) {
+        println("Showing AudioTrimmerBottomSheet for: ${selectedItemForTrimmer!!.title}")
+        AudioTrimmerBottomSheet(
+            item = selectedItemForTrimmer!!,
+            onDismiss = {
+                showTrimmerSheet = false
+                selectedItemForTrimmer = null
+            }
+        )
+    }
+
     // Initialize the first item and load its audio in a paused state
     LaunchedEffect(Unit) {
         if (musicItems.isNotEmpty()) {
@@ -125,8 +141,15 @@ fun MusicBrowseScreen(
                         }
                         isPlaying = !isPlaying
                     },
-                    onBackPressed = onBackPressed,
-                    onMusicSelected= { onMusicSelected(item) }
+                    onMusicSelected = {
+                        // Wait a frame to ensure it's dismissed before showing the new one
+                        coroutineScope.launch {
+                            delay(300) // wait for animation to finish
+                            selectedItemForTrimmer = item
+                            showTrimmerSheet = true
+                        }
+                    }
+
                 )
             }
         }
@@ -205,8 +228,7 @@ fun MusicBrowseScreen(
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 16.dp)
-                    .padding(bottom = 50.dp),
+                    .padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 // Banner
@@ -329,8 +351,7 @@ fun AudioPlayerBar(
     item: MusicItem,
     isPlaying: Boolean,
     onPlayPause: () -> Unit,
-    onBackPressed: () -> Unit,
-    onMusicSelected:() -> Unit
+    onMusicSelected: () -> Unit
 ) {
     val backgroundColor = remember(item.title) {
         val hash = item.title.hashCode()
@@ -403,19 +424,16 @@ fun AudioPlayerBar(
 
                 // Back Arrow Button (Smaller)
                 IconButton(
-                    onClick = onBackPressed,
+                    onClick = onMusicSelected,
                     modifier = Modifier
                         .padding(start = 20.dp, end = 8.dp)
                         .size(32.dp)
                         .clip(RoundedCornerShape(50.dp))
                         .background(Color.Black.copy(alpha = 0.6f))
-                        .clickable(onClick = {
-                            onMusicSelected
-                        })
                 ) {
                     Icon(
                         Icons.Default.ArrowForward,
-                        contentDescription = "Back",
+                        contentDescription = "Trim",
                         tint = Color.White,
                         modifier = Modifier.size(20.dp)
                     )
