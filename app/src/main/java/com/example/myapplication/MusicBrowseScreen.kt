@@ -23,7 +23,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.media3.common.MediaItem
@@ -39,13 +38,15 @@ data class MusicItem(
     val duration: String,
     val thumbnailUrl: String,
     val audioUrl: String
-)
+) {
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MusicBrowseScreen(
     onMusicSelected: (MusicItem) -> Unit, // Callback to pass selected music to CameraScreen
-    onBackPressed: () -> Unit // Callback to close the bottom sheet
+    onBackPressed: () -> Unit, // Callback to close the bottom sheet
+    viewModel: AudioTrimmerViewModel
 ) {
     val musicItems = listOf(
         MusicItem(
@@ -103,6 +104,13 @@ fun MusicBrowseScreen(
             onDismiss = {
                 showTrimmerSheet = false
                 selectedItemForTrimmer = null
+            },
+            onTrimmed = { startMs, endMs ->
+                showTrimmerSheet = false
+                selectedItemForTrimmer = null
+                viewModel.startMs = startMs
+                viewModel.endMs = endMs
+                viewModel.selectedAudioUrl = selectedItemForTrimmer!!.audioUrl
             }
         )
     }

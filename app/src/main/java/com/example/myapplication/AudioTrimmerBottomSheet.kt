@@ -1,17 +1,11 @@
+// File: AudioTrimmerBottomSheet.kt
 package com.example.myapplication
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.RangeSlider
-import androidx.compose.material3.SliderDefaults
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -19,12 +13,25 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.min
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AudioTrimmerBottomSheet(
     item: MusicItem,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onTrimmed: (startMs: Long, endMs: Long) -> Unit
 ) {
+    val totalDuration = remember { item.duration.durationSeconds().coerceAtLeast(1) }
+    val minDuration = 1 // seconds
+    val maxDuration = min(15, totalDuration) // max 15s or shorter if audio is short
+
+    var selectedRange by remember {
+        mutableStateOf(
+            0f..min(maxDuration.toFloat(), 10f) // default 10s or shorter
+        )
+    }
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         containerColor = Color(0xFF1F1F1F),
@@ -49,12 +56,29 @@ fun AudioTrimmerBottomSheet(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            WaveformTrimmer()
+            WaveformTrimmer(
+                selectedRange = selectedRange,
+                totalDuration = totalDuration,
+                onRangeChange = { selectedRange = it }
+            )
 
             Spacer(modifier = Modifier.height(16.dp))
 
+            val durationSec = (selectedRange.endInclusive - selectedRange.start).toInt()
+            Text(
+                text = "Duration: $durationSec seconds",
+                color = Color.Yellow,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+
             Button(
-                onClick = onDismiss,
+                onClick = {
+                    val startMs = (selectedRange.start * 1000).toLong()
+                    val endMs = (selectedRange.endInclusive * 1000).toLong()
+                    onTrimmed(startMs, endMs)
+                    onDismiss()
+                },
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFBB86FC))
             ) {
@@ -63,22 +87,23 @@ fun AudioTrimmerBottomSheet(
         }
     }
 }
-@Composable
-fun WaveformTrimmer() {
-    val barCount = 40
-    val totalDuration = 40 // seconds
-    val selectedRange = remember { mutableStateOf(10f..30f) }
 
-    val heights = remember {
+@Composable
+fun WaveformTrimmer(
+    selectedRange: ClosedFloatingPointRange<Float>,
+    totalDuration: Int,
+    onRangeChange: (ClosedFloatingPointRange<Float>) -> Unit
+) {
+    val barCount = 40
+    val heights = remember(barCount) {
         List(barCount) { i ->
-            if (i in selectedRange.value.start.toInt()..selectedRange.value.endInclusive.toInt())
-                (40..70).random()
+            val progress = i.toFloat() / barCount * totalDuration
+            if (progress in selectedRange) (40..70).random()
             else (10..30).random()
         }
     }
 
     Column {
-        // Waveform Bars
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -89,26 +114,22 @@ fun WaveformTrimmer() {
             verticalAlignment = Alignment.Bottom
         ) {
             for (i in 0 until barCount) {
+                val progress = i.toFloat() / barCount * totalDuration
+                val isActive = progress in selectedRange
                 Box(
                     modifier = Modifier
                         .width(3.dp)
                         .height(heights[i].dp)
-                        .background(
-                            if (i in selectedRange.value.start.toInt()..selectedRange.value.endInclusive.toInt())
-                                Color.White else Color.Gray
-                        )
+                        .background(if (isActive) Color.White else Color.Gray)
                 )
             }
         }
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // Interactive Range Slider
         RangeSlider(
-            value = selectedRange.value,
-            onValueChange = {
-                selectedRange.value = it
-            },
+            value = selectedRange,
+            onValueChange = onRangeChange,
             valueRange = 0f..totalDuration.toFloat(),
             steps = barCount - 2,
             colors = SliderDefaults.colors(
@@ -119,7 +140,7 @@ fun WaveformTrimmer() {
         )
 
         Text(
-            "Trim Range: ${selectedRange.value.start.toInt()}s - ${selectedRange.value.endInclusive.toInt()}s",
+            "Trim: ${selectedRange.start.toInt()}s - ${selectedRange.endInclusive.toInt()}s",
             color = Color.White,
             fontSize = 12.sp,
             modifier = Modifier.padding(top = 8.dp)
@@ -127,3 +148,16 @@ fun WaveformTrimmer() {
     }
 }
 
+// Helper: Convert "2:01" → 121 seconds
+fun String.durationSeconds(): Int {
+    return try {
+        if (this.contains(":")) {
+            val parts = this.split(":")
+            parts[0].toInt() * 60 + parts[1].toInt()
+        } else {
+            this.toInt()
+        }
+    } catch (e: NumberFormatException) {
+        30
+    }
+}

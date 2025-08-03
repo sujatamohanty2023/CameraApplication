@@ -49,10 +49,12 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.navigation.NavHostController
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -79,6 +81,8 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
     var videoCapture by remember { mutableStateOf<VideoCapture<Recorder>?>(null) }
     var recording by remember { mutableStateOf<Recording?>(null) }
 
+    val coroutineScope = rememberCoroutineScope()
+    val audioTrimViewModel: AudioTrimmerViewModel = viewModel()
     var showMusicPicker by remember { mutableStateOf(false) }
     var selectedMusic by remember { mutableStateOf<MusicItem?>(null) }
     val exoPlayer = remember {
@@ -219,6 +223,15 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
                             Toast.makeText(context, "Permissions missing", Toast.LENGTH_SHORT).show()
                             return@RecordBar
                         }
+                        // Play trimmed audio from startMs
+                        selectedMusic?.let { music ->
+                            exoPlayer.stop()
+                            exoPlayer.setMediaItem(MediaItem.fromUri(music.audioUrl))
+                            exoPlayer.prepare()
+                            exoPlayer.seekTo(audioTrimViewModel.startMs)
+                            exoPlayer.play()
+                            isMusicPlaying = true
+                        }
 
                         val dir = context.getExternalFilesDir(Environment.DIRECTORY_MOVIES)
                         dir?.mkdirs()
@@ -251,6 +264,15 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
                         recording = recordingSession
                         isRecording = true
                         isPaused = false
+
+                        // Auto-stop after trimmed duration
+                        coroutineScope.launch {
+                            delay(audioTrimViewModel.endMs-audioTrimViewModel.startMs)
+                            recording?.stop()
+                            recording = null
+                            isRecording = false
+                            isMusicPlaying = false
+                        }
 
                     },
                     onPauseRecording = {
@@ -297,6 +319,7 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
                         containerColor = Color(0xFF121212)
                     ) {
                         MusicBrowseScreen(
+                            viewModel=audioTrimViewModel,
                             onMusicSelected = { music ->
                                 selectedMusic = music
                                 showBottomSheet = false
