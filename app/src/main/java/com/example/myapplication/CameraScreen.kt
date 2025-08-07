@@ -50,7 +50,11 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.navigation.NavHostController
 import kotlinx.coroutines.Job
@@ -86,9 +90,18 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
     var showMusicPicker by remember { mutableStateOf(false) }
     var selectedMusic by remember { mutableStateOf<MusicItem?>(null) }
     val exoPlayer = remember {
-        ExoPlayer.Builder(context).build()
+        ExoPlayer.Builder(context)
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+                    .setUsage(C.USAGE_MEDIA)
+                    .build(),
+                true
+            )
+            .build()
     }
     var isMusicPlaying by remember { mutableStateOf(false) }
+    var autoStopJob by remember { mutableStateOf<Job?>(null) }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -101,10 +114,19 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
             exoPlayer.stop()
             exoPlayer.setMediaItem(MediaItem.fromUri(music.audioUrl))
             exoPlayer.prepare()
-            exoPlayer.play()
-            isMusicPlaying = true
-        }
-    }
+            exoPlayer.seekTo(audioTrimViewModel.startMs)
+            if (isRecording && !isPaused) {
+                exoPlayer.play()
+                isMusicPlaying = true
+            } else {
+                isMusicPlaying = false
+            }
+          }
+            } ?: run {
+                exoPlayer.stop()
+                isMusicPlaying = false
+            }
+
 
     val requiredPermissions = remember {
         mutableStateListOf(
@@ -226,11 +248,40 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
                         // Play trimmed audio from startMs
                         selectedMusic?.let { music ->
                             exoPlayer.stop()
+                            exoPlayer.clearMediaItems()
                             exoPlayer.setMediaItem(MediaItem.fromUri(music.audioUrl))
                             exoPlayer.prepare()
+                            // Set up listener to play only when ready
+                            val listener = object : Player.Listener {
+                                override fun onPlayWhenReadyChanged(isReady: Boolean, reason: Int) {
+                                    if (isReady && isRecording && !isPaused) {
+                                        exoPlayer.play()
+                                        isMusicPlaying = true
+                                        Log.d("AudioTrimmer", "Audio started playing at ${audioTrimViewModel.startMs}ms")
+                                        // Remove listener after playing to avoid leaks
+                                        exoPlayer.removeListener(this)
+                                    }
+                                }
+                                override fun onPlaybackStateChanged(state: Int) {
+                                    if (state == Player.STATE_ENDED) {
+                                        isMusicPlaying = false
+                                    }
+                                }
+
+                                override fun onPlayerError(error: PlaybackException) {
+                                    Log.e("AudioTrimmer", "ExoPlayer error: ${error.message}", error)
+                                    isMusicPlaying = false
+                                }
+                            }
+
+                            exoPlayer.addListener(listener)
                             exoPlayer.seekTo(audioTrimViewModel.startMs)
-                            exoPlayer.play()
-                            isMusicPlaying = true
+                            exoPlayer.playWhenReady = true
+
+                            Log.d("AudioTrimmer", "Starting audio at: ${audioTrimViewModel.startMs} ms")
+                            Log.d("AudioTrimmer", "Audio URL: ${selectedMusic?.audioUrl}")
+                            val isReady = exoPlayer.playbackState == Player.STATE_READY
+                            Log.d("AudioTrimmer", "Player ready: ${isReady}, PlayWhenReady: ${exoPlayer.playWhenReady}")
                         }
 
                         val dir = context.getExternalFilesDir(Environment.DIRECTORY_MOVIES)
@@ -266,21 +317,38 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
                         isPaused = false
 
                         // Auto-stop after trimmed duration
+                        autoStopJob?.cancel()
+                        val durationMs = (audioTrimViewModel.endMs - audioTrimViewModel.startMs).coerceAtLeast(100)
                         coroutineScope.launch {
-                            delay(audioTrimViewModel.endMs-audioTrimViewModel.startMs)
-                            recording?.stop()
-                            recording = null
-                            isRecording = false
-                            isMusicPlaying = false
+                            delay(durationMs)
+                            if (isRecording) {
+                                recording?.stop()
+                                recording = null
+                                isRecording = false
+                                isPaused = false
+
+                                if (isMusicPlaying) {
+                                    exoPlayer.pause()
+                                    isMusicPlaying = false
+                                }
+                            }
                         }
 
                     },
                     onPauseRecording = {
                         recording?.pause()
+                        if (isMusicPlaying) {
+                            exoPlayer.pause()
+                            isMusicPlaying = false
+                        }
                         isPaused = true
                     },
                     onResumeRecording = {
                         recording?.resume()
+                        selectedMusic?.let {
+                            exoPlayer.play()
+                            isMusicPlaying = true
+                        }
                         isPaused = false
                     },
                     onStopRecording = {
@@ -288,6 +356,13 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
                         recording = null
                         isRecording = false
                         isPaused = false
+
+                        autoStopJob?.cancel()
+                        autoStopJob = null
+                        if (isMusicPlaying) {
+                            exoPlayer.pause()
+                            isMusicPlaying = false
+                        }
                     }
                 )
             }

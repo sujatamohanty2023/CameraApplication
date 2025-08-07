@@ -106,11 +106,12 @@ fun MusicBrowseScreen(
                 selectedItemForTrimmer = null
             },
             onTrimmed = { startMs, endMs ->
-                showTrimmerSheet = false
-                selectedItemForTrimmer = null
                 viewModel.startMs = startMs
                 viewModel.endMs = endMs
                 viewModel.selectedAudioUrl = selectedItemForTrimmer!!.audioUrl
+
+                // ✅ Notify parent to close the music picker bottom sheet
+                onMusicSelected(selectedItemForTrimmer!!) // This will dismiss the sheet in CameraScreen
             }
         )
     }
