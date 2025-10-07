@@ -1,5 +1,6 @@
 package com.example.myapplication
 
+import TimerGridPopup
 import android.Manifest
 import android.content.Context
 import android.content.Intent
@@ -38,17 +39,21 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -85,10 +90,18 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
     var videoCapture by remember { mutableStateOf<VideoCapture<Recorder>?>(null) }
     var recording by remember { mutableStateOf<Recording?>(null) }
 
+    var showTimerPicker by remember { mutableStateOf(false) }
+    var selectedTimerSeconds by remember { mutableIntStateOf(0) }
+    var countdownSeconds by remember { mutableIntStateOf(0) }
+    var isCountingDown by remember { mutableStateOf(false) }
+    var timerAnchor by remember { mutableStateOf(Offset.Zero) }
+
     val coroutineScope = rememberCoroutineScope()
     val audioTrimViewModel: AudioTrimmerViewModel = viewModel()
     var showMusicPicker by remember { mutableStateOf(false) }
     var selectedMusic by remember { mutableStateOf<MusicItem?>(null) }
+    var isMusicPlaying by remember { mutableStateOf(false) }
+    var autoStopJob by remember { mutableStateOf<Job?>(null) }
     val exoPlayer = remember {
         ExoPlayer.Builder(context)
             .setAudioAttributes(
@@ -96,12 +109,41 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
                     .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
                     .setUsage(C.USAGE_MEDIA)
                     .build(),
-                true
+                true // Handle audio focus
             )
-            .build()
+            .build().apply {
+                // Set volume to maximum
+                volume = 1.0f
+                // Enable repeat mode off
+                repeatMode = Player.REPEAT_MODE_OFF
+            }
     }
-    var isMusicPlaying by remember { mutableStateOf(false) }
-    var autoStopJob by remember { mutableStateOf<Job?>(null) }
+    // Add a listener to track player state
+    LaunchedEffect(Unit) {
+        val listener = object : Player.Listener {
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                val stateString = when (playbackState) {
+                    Player.STATE_IDLE -> "IDLE"
+                    Player.STATE_BUFFERING -> "BUFFERING"
+                    Player.STATE_READY -> "READY"
+                    Player.STATE_ENDED -> "ENDED"
+                    else -> "UNKNOWN"
+                }
+                Log.d("ExoPlayer", "Playback state: $stateString")
+            }
+
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                Log.d("ExoPlayer", "Is playing: $isPlaying")
+                isMusicPlaying = isPlaying
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                Log.e("ExoPlayer", "Player error: ${error.message}", error)
+                Toast.makeText(context, "Audio error: ${error.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+        exoPlayer.addListener(listener)
+    }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -110,23 +152,57 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
     }
 
     LaunchedEffect(selectedMusic) {
-        selectedMusic?.let { music ->
-            exoPlayer.stop()
-            exoPlayer.setMediaItem(MediaItem.fromUri(music.audioUrl))
-            exoPlayer.prepare()
-            exoPlayer.seekTo(audioTrimViewModel.startMs)
-            if (isRecording && !isPaused) {
-                exoPlayer.play()
-                isMusicPlaying = true
-            } else {
-                isMusicPlaying = false
-            }
-          }
-            } ?: run {
-                exoPlayer.stop()
-                isMusicPlaying = false
-            }
+        if (selectedMusic != null) {
+            val music = selectedMusic!!
+            Log.d("AudioTrimmer", "Preparing music: ${music.title}, URL: ${music.audioUrl}")
 
+            try {
+                exoPlayer.stop()
+                exoPlayer.clearMediaItems()
+                exoPlayer.setMediaItem(MediaItem.fromUri(music.audioUrl))
+                exoPlayer.prepare()
+
+                // Wait for player to be ready
+                var attempts = 0
+                while (exoPlayer.playbackState != Player.STATE_READY && attempts < 100) {
+                    delay(50)
+                    attempts++
+                }
+
+                if (exoPlayer.playbackState == Player.STATE_READY) {
+                    exoPlayer.seekTo(audioTrimViewModel.startMs)
+                    Log.d("AudioTrimmer", "Player ready. Duration: ${exoPlayer.duration}ms")
+                    Log.d("AudioTrimmer", "Trim range: ${audioTrimViewModel.startMs}ms - ${audioTrimViewModel.endMs}ms")
+                } else {
+                    Log.e("AudioTrimmer", "Player failed to prepare. State: ${exoPlayer.playbackState}")
+                }
+            } catch (e: Exception) {
+                Log.e("AudioTrimmer", "Error preparing music", e)
+                Toast.makeText(context, "Error loading music: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            // No music selected
+            exoPlayer.stop()
+            exoPlayer.clearMediaItems()
+            isMusicPlaying = false
+            Log.d("AudioTrimmer", "Music cleared")
+        }
+    }
+    // Countdown effect
+    LaunchedEffect(isCountingDown) {
+        if (isCountingDown && countdownSeconds > 0) {
+            while (countdownSeconds > 0) {
+                delay(1000)
+                countdownSeconds--
+            }
+            // Start recording after countdown
+            if (countdownSeconds == 0) {
+                isCountingDown = false
+                // Trigger your recording start here
+                // onStartRecording()
+            }
+        }
+    }
 
     val requiredPermissions = remember {
         mutableStateListOf(
@@ -211,7 +287,12 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
             ) {
                 SideControl(icon = R.drawable.filter, label = "Filter",onClick = {})
                 SideControl(icon = R.drawable.beautify, label = "Beaut.",onClick = {})
-                SideControl(icon = R.drawable.timer, label = "Timer",onClick = {})
+                SideControl(
+                    icon = R.drawable.timer,
+                    label = if (selectedTimerSeconds > 0) "${selectedTimerSeconds}s" else "Length",
+                    onClick = { showTimerPicker = true },
+                    onPositionReady = { offset -> timerAnchor = offset }
+                )
                 SideControl(icon = R.drawable.speed, label = "Speed",onClick = {})
                 SideControl(icon = R.drawable.template, label = "Template",onClick = {})
                 if (outputSegments.isNotEmpty()) {
@@ -222,6 +303,36 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
                     })
                 }
             }
+        }
+        // Countdown overlay
+        if (isCountingDown && countdownSeconds > 0) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.5f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = countdownSeconds.toString(),
+                    color = Color.White,
+                    fontSize = 80.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+
+        // Timer selection bottom sheet
+        if (showTimerPicker) {
+            TimerGridPopup(
+                expanded = showTimerPicker,
+                onDismissRequest = { showTimerPicker = false },
+                selectedTimer = selectedTimerSeconds,
+                onTimerSelected = { seconds ->
+                    selectedTimerSeconds = seconds
+                    showTimerPicker = false
+                },
+                anchorPosition = timerAnchor,
+            )
         }
 
         // Bottom controls
@@ -240,130 +351,165 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
                     },
                     isRecording = isRecording,
                     isPaused = isPaused,
-                    onStartRecording = {
-                        if (!hasAllPermissions(context)) {
-                            Toast.makeText(context, "Permissions missing", Toast.LENGTH_SHORT).show()
-                            return@RecordBar
-                        }
-                        // Play trimmed audio from startMs
-                        selectedMusic?.let { music ->
-                            exoPlayer.stop()
-                            exoPlayer.clearMediaItems()
-                            exoPlayer.setMediaItem(MediaItem.fromUri(music.audioUrl))
-                            exoPlayer.prepare()
-                            // Set up listener to play only when ready
-                            val listener = object : Player.Listener {
-                                override fun onPlayWhenReadyChanged(isReady: Boolean, reason: Int) {
-                                    if (isReady && isRecording && !isPaused) {
-                                        exoPlayer.play()
-                                        isMusicPlaying = true
-                                        Log.d("AudioTrimmer", "Audio started playing at ${audioTrimViewModel.startMs}ms")
-                                        // Remove listener after playing to avoid leaks
-                                        exoPlayer.removeListener(this)
-                                    }
-                                }
-                                override fun onPlaybackStateChanged(state: Int) {
-                                    if (state == Player.STATE_ENDED) {
-                                        isMusicPlaying = false
-                                    }
-                                }
+                   onStartRecording = {
+                       if (!hasAllPermissions(context)) {
+                           Toast.makeText(context, "Permissions missing", Toast.LENGTH_SHORT).show()
+                           return@RecordBar
+                       }
 
-                                override fun onPlayerError(error: PlaybackException) {
-                                    Log.e("AudioTrimmer", "ExoPlayer error: ${error.message}", error)
-                                    isMusicPlaying = false
-                                }
-                            }
+                       // Start video recording first
+                       val dir = context.getExternalFilesDir(Environment.DIRECTORY_MOVIES)
+                       dir?.mkdirs()
+                       val name = "segment_${System.currentTimeMillis()}.mp4"
+                       val file = File(dir, name)
+                       val outputOptions = FileOutputOptions.Builder(file).build()
 
-                            exoPlayer.addListener(listener)
-                            exoPlayer.seekTo(audioTrimViewModel.startMs)
-                            exoPlayer.playWhenReady = true
+                       val pendingRecording = videoCapture?.output
+                           ?.prepareRecording(context, outputOptions)
 
-                            Log.d("AudioTrimmer", "Starting audio at: ${audioTrimViewModel.startMs} ms")
-                            Log.d("AudioTrimmer", "Audio URL: ${selectedMusic?.audioUrl}")
-                            val isReady = exoPlayer.playbackState == Player.STATE_READY
-                            Log.d("AudioTrimmer", "Player ready: ${isReady}, PlayWhenReady: ${exoPlayer.playWhenReady}")
-                        }
+                       val finalRecording = try {
+                           pendingRecording?.withAudioEnabled()
+                       } catch (e: SecurityException) {
+                           Log.e("VideoCapture", "SecurityException: Missing RECORD_AUDIO permission", e)
+                           pendingRecording
+                       }
 
-                        val dir = context.getExternalFilesDir(Environment.DIRECTORY_MOVIES)
-                        dir?.mkdirs()
-                        val name = "segment_${System.currentTimeMillis()}.mp4"
-                        val file = File(dir, name)
-                        val outputOptions = FileOutputOptions.Builder(file).build()
+                       val recordingSession = finalRecording?.start(ContextCompat.getMainExecutor(context)) { event ->
+                           if (event is VideoRecordEvent.Finalize) {
+                               if (event.hasError()) {
+                                   Log.e("VideoCapture", "Recording error: ${event.error}")
+                               } else {
+                                   outputSegments.add(event.outputResults.outputUri)
+                                   Log.d("VideoCapture", "Saved at: ${file.absolutePath}")
+                                   viewModel.addVideo(event.outputResults.outputUri)
+                               }
+                           }
+                       }
 
-                        val pendingRecording = videoCapture?.output
-                            ?.prepareRecording(context, outputOptions)
+                       recording = recordingSession
+                       isRecording = true
+                       isPaused = false
 
-                            val finalRecording =  try {
-                                pendingRecording?.withAudioEnabled()
-                            } catch (e: SecurityException) {
-                                Log.e("VideoCapture", "SecurityException: Missing RECORD_AUDIO permission", e)
-                                pendingRecording
-                            }
+                       // Play music if selected (it's already prepared in LaunchedEffect)
+                       selectedMusic?.let { music ->
+                           try {
+                               Log.d("AudioTrimmer", "Starting playback from ${audioTrimViewModel.startMs}ms")
 
-                        val recordingSession = finalRecording?.start(ContextCompat.getMainExecutor(context)) { event ->
-                            if (event is VideoRecordEvent.Finalize) {
-                                if (event.hasError()) {
-                                    Log.e("VideoCapture", "Recording error: ${event.error}")
-                                } else {
-                                    outputSegments.add(event.outputResults.outputUri)
-                                    Log.d("VideoCapture", "Saved at: ${file.absolutePath}")
-                                    viewModel.addVideo(event.outputResults.outputUri)
-                                }
-                            }
-                        }
+                               // If player is ready, play immediately
+                               if (exoPlayer.playbackState == Player.STATE_READY) {
+                                   exoPlayer.seekTo(audioTrimViewModel.startMs)
+                                   exoPlayer.play()
+                                   isMusicPlaying = true
+                                   Log.d("AudioTrimmer", "Audio playing immediately")
+                               } else {
+                                   // If not ready, wait in coroutine
+                                   coroutineScope.launch {
+                                       var attempts = 0
+                                       while (exoPlayer.playbackState != Player.STATE_READY && attempts < 50) {
+                                           delay(50)
+                                           attempts++
+                                       }
 
-                        recording = recordingSession
-                        isRecording = true
-                        isPaused = false
+                                       if (exoPlayer.playbackState == Player.STATE_READY && isRecording && !isPaused) {
+                                           exoPlayer.seekTo(audioTrimViewModel.startMs)
+                                           exoPlayer.play()
+                                           isMusicPlaying = true
+                                           Log.d("AudioTrimmer", "Audio playing after wait")
+                                       } else {
+                                           Log.e("AudioTrimmer", "Player not ready. State: ${exoPlayer.playbackState}")
+                                       }
+                                   }
+                               }
 
-                        // Auto-stop after trimmed duration
-                        autoStopJob?.cancel()
-                        val durationMs = (audioTrimViewModel.endMs - audioTrimViewModel.startMs).coerceAtLeast(100)
-                        coroutineScope.launch {
-                            delay(durationMs)
-                            if (isRecording) {
-                                recording?.stop()
-                                recording = null
-                                isRecording = false
-                                isPaused = false
+                               // Auto-stop after trimmed duration
+                               autoStopJob?.cancel()
+                               val durationMs = (audioTrimViewModel.endMs - audioTrimViewModel.startMs).coerceAtLeast(100)
+                               autoStopJob = coroutineScope.launch {
+                                   delay(durationMs)
+                                   if (isRecording) {
+                                       Log.d("AudioTrimmer", "Auto-stopping after ${durationMs}ms")
+                                       recording?.stop()
+                                       recording = null
+                                       isRecording = false
+                                       isPaused = false
 
-                                if (isMusicPlaying) {
-                                    exoPlayer.pause()
-                                    isMusicPlaying = false
-                                }
-                            }
-                        }
+                                       if (isMusicPlaying) {
+                                           exoPlayer.pause()
+                                           isMusicPlaying = false
+                                       }
+                                   }
+                               }
+                           } catch (e: Exception) {
+                               Log.e("AudioTrimmer", "Error playing audio", e)
+                               Toast.makeText(context, "Audio playback error: ${e.message}", Toast.LENGTH_SHORT).show()
+                           }
+                       } ?: run {
+                           Log.d("CameraScreen", "Recording started without music")
+                       }
+                   },
+                   onPauseRecording = {
+                       recording?.pause()
+                       autoStopJob?.cancel() // Pause the timer too
+                       if (isMusicPlaying) {
+                           exoPlayer.pause()
+                           isMusicPlaying = false
+                           Log.d("AudioTrimmer", "Audio paused")
+                       }
+                       isPaused = true
+                   },
+                   onResumeRecording = {
+                       recording?.resume()
+                       selectedMusic?.let {
+                           try {
+                               exoPlayer.play()
+                               isMusicPlaying = true
+                               Log.d("AudioTrimmer", "Audio resumed")
 
-                    },
-                    onPauseRecording = {
-                        recording?.pause()
-                        if (isMusicPlaying) {
-                            exoPlayer.pause()
-                            isMusicPlaying = false
-                        }
-                        isPaused = true
-                    },
-                    onResumeRecording = {
-                        recording?.resume()
-                        selectedMusic?.let {
-                            exoPlayer.play()
-                            isMusicPlaying = true
-                        }
-                        isPaused = false
-                    },
-                    onStopRecording = {
-                        recording?.stop()
-                        recording = null
-                        isRecording = false
-                        isPaused = false
+                               // Resume the auto-stop timer
+                               val remainingDuration = audioTrimViewModel.endMs - exoPlayer.currentPosition
+                               if (remainingDuration > 0) {
+                                   autoStopJob?.cancel()
+                                   autoStopJob = coroutineScope.launch {
+                                       delay(remainingDuration)
+                                       if (isRecording) {
+                                           recording?.stop()
+                                           recording = null
+                                           isRecording = false
+                                           isPaused = false
 
-                        autoStopJob?.cancel()
-                        autoStopJob = null
-                        if (isMusicPlaying) {
-                            exoPlayer.pause()
-                            isMusicPlaying = false
-                        }
-                    }
+                                           if (isMusicPlaying) {
+                                               exoPlayer.pause()
+                                               isMusicPlaying = false
+                                           }
+                                       }
+                                   }
+                               }
+                           } catch (e: Exception) {
+                               Log.e("AudioTrimmer", "Error resuming audio", e)
+                           }
+                       }
+                       isPaused = false
+                   },
+                   onStopRecording = {
+                       recording?.stop()
+                       recording = null
+                       isRecording = false
+                       isPaused = false
+
+                       autoStopJob?.cancel()
+                       autoStopJob = null
+
+                       if (isMusicPlaying) {
+                           exoPlayer.pause()
+                           isMusicPlaying = false
+                           Log.d("AudioTrimmer", "Audio stopped")
+                       }
+
+                       // Reset to start position for next recording
+                       selectedMusic?.let {
+                           exoPlayer.seekTo(audioTrimViewModel.startMs)
+                       }
+                   }
                 )
             }
 
@@ -755,7 +901,7 @@ fun bindCameraUseCases(
     cameraProvider: ProcessCameraProvider,
     previewView: PreviewView,
     lensFacing: Int,
-    lifecycleOwner: androidx.lifecycle.LifecycleOwner,
+    lifecycleOwner: LifecycleOwner,
     flashOn: Boolean,
     onCameraControlAvailable: (CameraControl) -> Unit,
     onVideoCaptureReady: (VideoCapture<Recorder>) -> Unit
@@ -783,20 +929,41 @@ fun bindCameraUseCases(
         Log.e("CameraX", "Use case binding failed", exc)
     }
 }
-
 @Composable
-fun SideControl(icon: Int, label: String, onClick: () -> Unit) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+fun SideControl(
+    icon: Int,
+    label: String,
+    onClick: () -> Unit,
+    onPositionReady: ((Offset) -> Unit)? = null // Optional callback
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .clickable { onClick() }
+            .then(
+                if (onPositionReady != null) {
+                    Modifier.onGloballyPositioned { layoutCoordinates ->
+                        val position = layoutCoordinates.localToWindow(Offset.Zero)
+                        val height = layoutCoordinates.size.height.toFloat()
+                        onPositionReady(position + Offset(0f, height))
+                    }
+                } else Modifier
+            )
+    ) {
         Icon(
             painter = painterResource(id = icon),
             contentDescription = label,
             tint = Color.White,
-            modifier = Modifier.size(24.dp).clickable { onClick() }
+            modifier = Modifier.size(24.dp)
         )
-        Text(label, color = Color.White, fontSize = 12.sp)
+        Text(
+            text = label,
+            color = Color.White,
+            fontSize = 12.sp,
+            textAlign = TextAlign.Center
+        )
     }
 }
-
 @Composable
 fun BottomControl(label: String, highlight: Boolean = false, onClick: () -> Unit) {
     Column(
