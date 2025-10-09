@@ -85,140 +85,10 @@ fun VideoTimerScreen(
             )
         }
 
-        Spacer(Modifier.height(24.dp))
-
-        // Duration Display Card
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = Color(0xFF252525)
-            ),
-            shape = RoundedCornerShape(20.dp),
-            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
-        ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(24.dp)
-            ) {
-                Text(
-                    text = "Recording Duration",
-                    color = Color.Gray,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium
-                )
-
-                Spacer(Modifier.height(8.dp))
-
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center
-                ) {
-                    Text(
-                        text = "${duration}",
-                        color = Color.White,
-                        fontSize = 48.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    Text(
-                        text = "sec",
-                        color = Color.White.copy(alpha = 0.7f),
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
-
-                Spacer(Modifier.height(12.dp))
-
-                Divider(
-                    color = Color.Gray.copy(alpha = 0.2f),
-                    thickness = 1.dp
-                )
-
-                Spacer(Modifier.height(12.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("Start", color = Color.Gray, fontSize = 12.sp)
-                        Text(
-                            "${clipStart.roundToInt()}s",
-                            color = Color.White,
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                    Icon(
-                        painter = androidx.compose.ui.res.painterResource(android.R.drawable.ic_media_play),
-                        contentDescription = null,
-                        tint = Color.Gray,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("End", color = Color.Gray, fontSize = 12.sp)
-                        Text(
-                            "${clipEnd.roundToInt()}s",
-                            color = Color.White,
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-            }
-        }
-
         Spacer(Modifier.height(20.dp))
 
         // Range Slider Card
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = Color(0xFF252525)
-            ),
-            shape = RoundedCornerShape(20.dp)
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(20.dp)
-            ) {
-                Text(
-                    text = "Adjust Time Range",
-                    color = Color.White,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
-
-                Spacer(Modifier.height(20.dp))
-
-                RangeSlider(
-                    value = clipStart..clipEnd,
-                    onValueChange = { range ->
-                        clipStart = range.start
-                        clipEnd = range.endInclusive.coerceAtLeast(range.start + 1f)
-                    },
-                    valueRange = 0f..totalDuration,
-                    colors = SliderDefaults.colors(
-                        thumbColor = Color.White,
-                        activeTrackColor = Color.White,
-                        inactiveTrackColor = Color.Gray.copy(alpha = 0.3f)
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text("0s", color = Color.Gray, fontSize = 13.sp)
-                    Text("${totalDuration.roundToInt()}s", color = Color.Gray, fontSize = 13.sp)
-                }
-            }
-        }
+        OneThumbRangeSlider(totalDuration)
 
         Spacer(Modifier.height(20.dp))
 
@@ -370,7 +240,7 @@ fun CountdownChip(
                 )
                 Text(
                     text = "sec",
-                    color = if (isSelected)Color.Black.copy(alpha = 0.7f) else Color.Black.copy(alpha = 0.7f),
+                    color = if (isSelected)Color.Black.copy(alpha = 0.7f) else Color.White.copy(alpha = 0.7f),
                     fontSize = 11.sp
                 )
             }
