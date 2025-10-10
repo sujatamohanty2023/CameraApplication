@@ -7,7 +7,6 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
-import android.os.SystemClock
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -18,31 +17,16 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.video.*
 import androidx.camera.view.PreviewView
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
@@ -52,7 +36,6 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.navigation.NavHostController
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -77,6 +60,7 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
     val outputSegments = remember { mutableStateListOf<Uri>() }
     var videoCapture by remember { mutableStateOf<VideoCapture<Recorder>?>(null) }
     var recording by remember { mutableStateOf<Recording?>(null) }
+    var triggerStartRecording  by remember { mutableStateOf(false) }
 
     var showTimerPicker by remember { mutableStateOf(false) }
     var selectedTimerSeconds by remember { mutableIntStateOf(0) }
@@ -396,7 +380,7 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
                 onCountdownFinish = {
                     timerCountdown = 0
                     isTimerActive = false
-                    startVideoRecording()
+                    triggerStartRecording  = true
                 }
             )
         }
@@ -408,13 +392,14 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
             if (selectedTab != "Live") {
                 RecordBar(
                     selectedTab = selectedTab,
-                    onRecordClick = { },
                     onPhotoClick = { Log.d("CameraScreen", "Photo captured") },
                     isRecording = isRecording,
                     isPaused = isPaused,
+                    externalTriggerStart = triggerStartRecording ,
                     onStartRecording = {
-                        isTimerActive = false
+                        //isTimerActive = false
                         startVideoRecording()
+                        triggerStartRecording  = false
                     },
                     onPauseRecording = {
                         recording?.pause()
@@ -519,193 +504,6 @@ fun hasAllPermissions(context: Context): Boolean {
     }
     return permissions.all { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }
 }
-
-@Composable
-fun SegmentRecordButton(
-    modifier: Modifier = Modifier,
-    isRecording: Boolean,
-    isPaused: Boolean,
-    maxDurationMs: Long = 15000L,
-    onStartRecording: () -> Unit = {},
-    onPauseRecording: () -> Unit = {},
-    onResumeRecording: () -> Unit = {},
-    onStopRecording: () -> Unit = {}
-) {
-    val segments = remember { mutableStateListOf<Float>() }
-    val whiteSeparators = remember { mutableStateListOf<Float>() }
-    var currentSegmentProgress by remember { mutableFloatStateOf(0f) }
-    val coroutineScope = rememberCoroutineScope()
-    var recordingJob by remember { mutableStateOf<Job?>(null) }
-
-    fun stopRecording(reason: String = "Manual") {
-        recordingJob?.cancel()
-        recordingJob = null
-        if (currentSegmentProgress > 0f) {
-            segments.add(currentSegmentProgress)
-            whiteSeparators.add(segments.sum() * 360f)
-            currentSegmentProgress = 0f
-            onStopRecording()
-        }
-    }
-
-    fun startSegment() {
-        onStartRecording()
-        recordingJob = coroutineScope.launch {
-            val startTime = SystemClock.elapsedRealtime()
-            while (isActive) {
-                val now = SystemClock.elapsedRealtime()
-                val elapsed = now - startTime
-                currentSegmentProgress = (elapsed / maxDurationMs.toFloat()).coerceAtMost(1f)
-                val totalProgress = segments.sum() + currentSegmentProgress
-                if (totalProgress >= 1f) {
-                    stopRecording("Auto - Max Duration Reached")
-                    break
-                }
-                delay(16)
-            }
-        }
-    }
-
-    fun pauseSegment() {
-        onPauseRecording()
-        recordingJob?.cancel()
-        recordingJob = null
-        if (currentSegmentProgress > 0f) {
-            segments.add(currentSegmentProgress)
-            whiteSeparators.add(segments.sum() * 360f)
-            currentSegmentProgress = 0f
-        }
-        onStopRecording()
-    }
-
-    fun resumeSegment() {
-        onResumeRecording()
-        startSegment()
-    }
-
-    val outerSize by animateDpAsState(targetValue = if (!isRecording && !isPaused) 70.dp else 100.dp)
-    val innerSize by animateDpAsState(targetValue = if (!isRecording && !isPaused) 50.dp else 70.dp)
-
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier = modifier.size(outerSize).clickable {
-            when {
-                !isRecording -> startSegment()
-                isRecording && !isPaused -> pauseSegment()
-                isRecording && isPaused -> resumeSegment()
-            }
-        }
-    ) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val stroke = if (!isRecording && !isPaused) 8.dp.toPx() else 12.dp.toPx()
-            var startAngle = -90f
-
-            segments.forEach { segment ->
-                val sweep = 360f * segment
-                drawArc(color = Color.Red, startAngle = startAngle, sweepAngle = sweep, useCenter = false, style = Stroke(width = stroke))
-                startAngle += sweep
-            }
-
-            if (isRecording && !isPaused && currentSegmentProgress > 0f) {
-                val sweep = 360f * currentSegmentProgress
-                drawArc(color = Color.Red, startAngle = startAngle, sweepAngle = sweep, useCenter = false, style = Stroke(width = stroke))
-                startAngle += sweep
-            }
-
-            if (!isRecording && !isPaused) {
-                whiteSeparators.forEach { angle ->
-                    drawArc(color = Color.LightGray, startAngle = -90f + angle, sweepAngle = 3f, useCenter = false, style = Stroke(width = stroke))
-                }
-            }
-
-            val totalProgress = segments.sum() + currentSegmentProgress
-            val remaining = 360f - (360f * totalProgress)
-            if (remaining > 0f) {
-                drawArc(color = Color.White, startAngle = startAngle, sweepAngle = remaining, useCenter = false, style = Stroke(width = stroke))
-            }
-        }
-
-        Box(modifier = Modifier.size(innerSize).clip(CircleShape).background(if (isRecording) Color.Red else Color.White))
-    }
-}
-
-@Composable
-fun TopBar(onFlip: () -> Unit, onFlashToggle: () -> Unit, isFlashOn: Boolean, visible: Boolean, onShowMusicPicker: () -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(start = 10.dp, end = 10.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Row(
-            modifier = Modifier.background(Color.Black.copy(alpha = 0.3f), shape = RoundedCornerShape(50.dp)).padding(horizontal = 8.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(Icons.Default.Close, contentDescription = "Close", tint = Color.White, modifier = Modifier.size(20.dp))
-        }
-        if (visible) {
-            Row(
-                modifier = Modifier.background(Color.Black.copy(alpha = 0.3f), shape = RoundedCornerShape(20.dp))
-                    .padding(horizontal = 15.dp, vertical = 4.dp).clickable(onClick = onShowMusicPicker),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(painter = painterResource(id = R.drawable.music), contentDescription = "music", tint = Color.White, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("Add Sound", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Medium)
-            }
-            Row {
-                Icon(painter = painterResource(id = R.drawable.flip), contentDescription = "Flip Camera", tint = Color.White, modifier = Modifier.size(24.dp).clickable { onFlip() })
-                Spacer(modifier = Modifier.width(8.dp))
-                Icon(painter = painterResource(id = R.drawable.flash), contentDescription = "Flash", tint = if (isFlashOn) Color.Yellow else Color.White, modifier = Modifier.size(24.dp).clickable { onFlashToggle() })
-            }
-        }
-    }
-}
-
-@Composable
-fun RecordBar(
-    selectedTab: String, onRecordClick: () -> Unit, onPhotoClick: () -> Unit, isRecording: Boolean, isPaused: Boolean,
-    onStartRecording: () -> Unit, onPauseRecording: () -> Unit, onResumeRecording: () -> Unit, onStopRecording: () -> Unit
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        if (!isRecording && !isPaused) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable { }) {
-                Icon(painter = painterResource(id = R.drawable.effect), contentDescription = "Effects", tint = Color.White, modifier = Modifier.size(32.dp))
-                Text("Effects", color = Color.White, fontSize = 12.sp)
-            }
-        } else {
-            Spacer(modifier = Modifier.width(0.dp))
-        }
-
-        Box(
-            modifier = Modifier.clickable { if (selectedTab == "Photo") { onPhotoClick() } }
-                .padding(bottom = if (!isRecording && !isPaused) 0.dp else 100.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            if (selectedTab == "Photo") {
-                Icon(painter = painterResource(id = R.drawable.camera_shutter), contentDescription = "Capture Photo", modifier = Modifier.size(70.dp), tint = Color.Unspecified)
-            } else if (selectedTab == "Clips") {
-                SegmentRecordButton(
-                    isRecording = isRecording, isPaused = isPaused, onStartRecording = onStartRecording,
-                    onPauseRecording = onPauseRecording, onResumeRecording = onResumeRecording, onStopRecording = onStopRecording
-                )
-            }
-        }
-
-        if (!isRecording && !isPaused) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable { }) {
-                Icon(painter = painterResource(id = R.drawable.gallery), contentDescription = "Gallery", tint = Color.White, modifier = Modifier.size(32.dp))
-                Text("Gallery", color = Color.White, fontSize = 12.sp)
-            }
-        } else {
-            Spacer(modifier = Modifier.width(0.dp))
-        }
-    }
-}
-
 fun bindCameraUseCases(
     cameraProvider: ProcessCameraProvider, previewView: PreviewView, lensFacing: Int, lifecycleOwner: LifecycleOwner,
     flashOn: Boolean, onCameraControlAvailable: (CameraControl) -> Unit, onVideoCaptureReady: (VideoCapture<Recorder>) -> Unit
@@ -725,65 +523,7 @@ fun bindCameraUseCases(
         Log.e("CameraX", "Use case binding failed", exc)
     }
 }
-@Composable
-fun SideControl(
-    icon: Int,
-    label: String,
-    onClick: () -> Unit,
-    onPositionReady: ((Offset) -> Unit)? = null // Optional callback
-) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier
-            .clickable { onClick() }
-            .then(
-                if (onPositionReady != null) {
-                    Modifier.onGloballyPositioned { layoutCoordinates ->
-                        val position = layoutCoordinates.localToWindow(Offset.Zero)
-                        val height = layoutCoordinates.size.height.toFloat()
-                        onPositionReady(position + Offset(0f, height))
-                    }
-                } else Modifier
-            )
-    ) {
-        Icon(
-            painter = painterResource(id = icon),
-            contentDescription = label,
-            tint = Color.White,
-            modifier = Modifier.size(24.dp)
-        )
-        Text(
-            text = label,
-            color = Color.White,
-            fontSize = 12.sp,
-            textAlign = TextAlign.Center
-        )
-    }
-}
-@Composable
-fun BottomControl(label: String, highlight: Boolean = false, onClick: () -> Unit) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-        modifier = Modifier
-            .padding(horizontal = 18.dp, vertical = 24.dp)
-            .clickable { onClick() }
-    ) {
-        Text(
-            text = label,
-            color = if (highlight) Color.White else Color.Gray,
-            fontSize = if (highlight) 18.sp else 16.sp,
-            fontWeight = if (highlight) FontWeight.Bold else FontWeight.Normal
-        )
-        if (highlight) {
-            Spacer(modifier = Modifier.height(4.dp))
-            Box(
-                modifier = Modifier
-                    .size(width = 12.dp, height = 4.dp)
-                    .background(color = Color.White, shape = RoundedCornerShape(4.dp))
-            )
-        }
-    }
-}
+
+
 
 
