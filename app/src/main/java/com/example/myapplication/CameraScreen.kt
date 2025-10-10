@@ -78,6 +78,8 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
     var isMusicPlaying by remember { mutableStateOf(false) }
     var autoStopJob by remember { mutableStateOf<Job?>(null) }
 
+    var showFilterSheet by remember { mutableStateOf(false) }
+
     val exoPlayer = remember {
         ExoPlayer.Builder(context)
             .setAudioAttributes(
@@ -309,7 +311,7 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
                 verticalArrangement = Arrangement.spacedBy(20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                SideControl(icon = R.drawable.filter, label = "Filter", onClick = {})
+                SideControl(icon = R.drawable.filter, label = "Filter", onClick = { showFilterSheet = true})
                 SideControl(icon = R.drawable.beautify, label = "Beaut.", onClick = {})
                 SideControl(
                     icon = R.drawable.timer,
@@ -490,6 +492,23 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
                         )
                     }
                 }
+            }
+        }
+        if (showFilterSheet) {
+            val sheetState = rememberModalBottomSheetState(
+                skipPartiallyExpanded = true, // prevent half state
+                confirmValueChange = { value ->
+                    // ✅ Prevent swipe-down dismiss
+                    value != SheetValue.Hidden
+                }
+            )
+            ModalBottomSheet(
+                onDismissRequest = { showFilterSheet = false },
+                containerColor = Color(0xFF101010),
+                sheetState = sheetState,
+                dragHandle = null
+            ) {
+                FilterBottomSheetUI(onDismiss = { showFilterSheet = false })
             }
         }
     }
