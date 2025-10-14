@@ -9,7 +9,7 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.example.myapplication"
+        applicationId = "com.lollipop.myapplication"
         minSdk = 24
         targetSdk = 36
         versionCode = 1
@@ -61,6 +61,7 @@ dependencies {
     implementation(libs.media3.ui)
 
     implementation(libs.coil.compose)
+    implementation("ai.deepar.ar:DeepAR:5.6.20")
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
