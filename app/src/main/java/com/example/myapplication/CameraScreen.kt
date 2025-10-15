@@ -1,18 +1,25 @@
 package com.example.myapplication
 
 import TimerGridPopup
+import ai.deepar.ar.AREventListener
+import ai.deepar.ar.DeepAR
+import ai.deepar.ar.DeepARImageFormat
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraControl
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.ExperimentalGetImage
+import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.video.*
@@ -34,10 +41,12 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.*
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.navigation.NavHostController
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
+import java.util.concurrent.Executors
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -80,6 +89,14 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
 
     var showFilterSheet by remember { mutableStateOf(false) }
 
+    // DeepAR state
+    var deepAR by remember { mutableStateOf<DeepAR?>(null) }
+    var surfaceView by remember { mutableStateOf<DeepARSurfaceView?>(null) }
+    var isDeepARInitialized by remember { mutableStateOf(false) }
+    var isSurfaceReady by remember { mutableStateOf(false) }
+    var selectedFilter by remember { mutableStateOf<FilterItem?>(null) }
+    var useDeepAR by remember { mutableStateOf(true) } // Toggle for DeepAR
+
     val exoPlayer = remember {
         ExoPlayer.Builder(context)
             .setAudioAttributes(
@@ -93,6 +110,72 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
                 volume = 1.0f
                 repeatMode = Player.REPEAT_MODE_OFF
             }
+    }
+
+    // Initialize DeepAR
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && useDeepAR) {
+            try {
+                val deepar = DeepAR(context)
+                deepar.setLicenseKey("83f789a8e6168a14db7bf506010e82c331d90f3f35296e1b63abf6c62a1e6e975700e5ad360c6cf5")
+
+                val arEventListener = object : AREventListener {
+                    override fun initialized() {
+                        Log.d("DeepAR", "✅ DeepAR initialized successfully")
+                        isDeepARInitialized = true
+                    }
+
+                    override fun error(errorType: ai.deepar.ar.ARErrorType?, error: String?) {
+                        Log.e("DeepAR", "❌ DeepAR Error: $errorType - $error")
+                    }
+
+                    override fun effectSwitched(slot: String?) {
+                        Log.d("DeepAR", "✨ Effect switched in slot: $slot")
+                    }
+
+                    override fun faceVisibilityChanged(faceVisible: Boolean) {}
+                    override fun frameAvailable(frame: android.media.Image) {}
+                    override fun imageVisibilityChanged(gameObjectName: String?, imageVisible: Boolean) {}
+                    override fun screenshotTaken(bitmap: android.graphics.Bitmap) {}
+                    override fun shutdownFinished() {}
+                    override fun videoRecordingFailed() {}
+                    override fun videoRecordingFinished() {}
+                    override fun videoRecordingPrepared() {}
+                    override fun videoRecordingStarted() {}
+                }
+
+                deepar.initialize(context, arEventListener)
+                deepAR = deepar
+
+                val surface = DeepARSurfaceView(context)
+                surface.bindDeepAR(deepar) {
+                    isSurfaceReady = true
+                }
+                surfaceView = surface
+
+            } catch (e: Exception) {
+                Log.e("DeepAR", "Failed to initialize DeepAR: ${e.message}", e)
+                useDeepAR = false
+            }
+        }
+    }
+
+    // Apply DeepAR filter
+    fun applyDeepARFilter(filter: FilterItem?) {
+        deepAR?.let { ar ->
+            try {
+                if (filter?.path != null) {
+                    Log.d("DeepAR", "Applying filter: ${filter.name}")
+                    ar.switchEffect("effects", filter.path)
+                } else {
+                    Log.d("DeepAR", "Clearing filter")
+                    ar.switchEffect("effects", null as String?)
+                }
+                selectedFilter = filter
+            } catch (e: Exception) {
+                Log.e("DeepAR", "Error applying filter: ${e.message}", e)
+            }
+        }
     }
 
     // SEPARATED RECORDING FUNCTION
@@ -196,7 +279,106 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
             }
         }
     }
+    fun stopDeepARRecording(file: File) {
+        try {
+            deepAR?.stopVideoRecording()
+            isRecording = false
+            isPaused = false
+            isTimerActive = false
 
+            outputSegments.add(Uri.fromFile(file))
+            viewModel.addVideo(Uri.fromFile(file))
+
+            if (isMusicPlaying) {
+                exoPlayer.pause()
+                isMusicPlaying = false
+            }
+
+            Log.d("DeepAR", "Recording stopped and saved: ${file.absolutePath}")
+
+        } catch (e: Exception) {
+            Log.e("DeepAR", "Error stopping DeepAR recording: ${e.message}", e)
+            Toast.makeText(context, "Stop recording failed", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun startVideoRecordingDeepAR() {
+        if (!hasAllPermissions(context)) {
+            Toast.makeText(context, "Permissions missing", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val dir = context.getExternalFilesDir(Environment.DIRECTORY_MOVIES)
+        dir?.mkdirs()
+        val file = File(dir, "deepar_segment_${System.currentTimeMillis()}.mp4")
+
+        try {
+            // Start DeepAR recording
+            deepAR?.startVideoRecording(file.absolutePath)
+            isRecording = true
+            isPaused = false
+
+            Log.d("DeepAR", "Recording started at: ${file.absolutePath}")
+
+            selectedMusic?.let {
+                try {
+                    Log.d("AudioTrimmer", "Starting playback from ${audioTrimViewModel.startMs}ms")
+
+                    if (exoPlayer.playbackState == Player.STATE_READY) {
+                        exoPlayer.seekTo(audioTrimViewModel.startMs)
+                        exoPlayer.play()
+                        isMusicPlaying = true
+                    } else {
+                        coroutineScope.launch {
+                            var attempts = 0
+                            while (exoPlayer.playbackState != Player.STATE_READY && attempts < 50) {
+                                delay(50)
+                                attempts++
+                            }
+                            if (exoPlayer.playbackState == Player.STATE_READY && isRecording && !isPaused) {
+                                exoPlayer.seekTo(audioTrimViewModel.startMs)
+                                exoPlayer.play()
+                                isMusicPlaying = true
+                            }
+                        }
+                    }
+
+                    val durationMs = if (isTimerActive) {
+                        ((recordingEndTime - recordingStartTime) * 1000).toLong()
+                    } else {
+                        (audioTrimViewModel.endMs - audioTrimViewModel.startMs).coerceAtLeast(100)
+                    }
+
+                    autoStopJob?.cancel()
+                    autoStopJob = coroutineScope.launch {
+                        delay(durationMs)
+                        stopDeepARRecording(file)
+                        outputSegments.add(Uri.fromFile(file))
+                        viewModel.addVideo(Uri.fromFile(file))
+                    }
+
+                } catch (e: Exception) {
+                    Log.e("AudioTrimmer", "Error playing audio", e)
+                }
+            } ?: run {
+                // No music
+                if (isTimerActive) {
+                    val durationMs = ((recordingEndTime - recordingStartTime) * 1000).toLong()
+                    autoStopJob?.cancel()
+                    autoStopJob = coroutineScope.launch {
+                        delay(durationMs)
+                        stopDeepARRecording(file)
+                        outputSegments.add(Uri.fromFile(file))
+                        viewModel.addVideo(Uri.fromFile(file))
+                    }
+                }
+            }
+
+        } catch (e: Exception) {
+            Log.e("DeepAR", "Error starting DeepAR recording: ${e.message}", e)
+            Toast.makeText(context, "Recording failed", Toast.LENGTH_SHORT).show()
+        }
+    }
     LaunchedEffect(Unit) {
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -210,7 +392,10 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
     }
 
     DisposableEffect(Unit) {
-        onDispose { exoPlayer.release() }
+        onDispose {
+            exoPlayer.release()
+            deepAR?.release()
+        }
     }
 
     LaunchedEffect(selectedMusic) {
@@ -265,7 +450,7 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
         }, ContextCompat.getMainExecutor(context))
     }
 
-    LaunchedEffect(cameraPermissionGranted, lensFacing, previewView, cameraProvider, isFlashOn) {
+   /* LaunchedEffect(cameraPermissionGranted, lensFacing, previewView, cameraProvider, isFlashOn) {
         if (cameraPermissionGranted && cameraProvider != null && previewView != null) {
             bindCameraUseCases(
                 cameraProvider!!,
@@ -277,16 +462,36 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
                 onVideoCaptureReady = { videoCapture = it }
             )
         }
+    }*/
+
+    // Start camera with DeepAR integration
+    LaunchedEffect(cameraPermissionGranted, lensFacing, cameraProvider, isFlashOn, isDeepARInitialized, isSurfaceReady) {
+        if (cameraPermissionGranted && cameraProvider != null && useDeepAR && isDeepARInitialized && isSurfaceReady) {
+            bindCameraWithDeepAR(
+                cameraProvider!!,
+                lensFacing,
+                lifecycleOwner,
+                deepAR,
+                onVideoCaptureReady = { videoCapture = it }
+            )
+        }
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
         if (cameraPermissionGranted) {
-            AndroidView(factory = { ctx ->
+           /* AndroidView(factory = { ctx ->
                 PreviewView(ctx).apply {
                     scaleType = PreviewView.ScaleType.FILL_CENTER
                     setBackgroundColor(android.graphics.Color.BLACK)
                 }.also { previewView = it }
-            }, modifier = Modifier.fillMaxSize())
+            }, modifier = Modifier.fillMaxSize())*/
+            if (useDeepAR && surfaceView != null) {
+                // DeepAR Surface View
+                AndroidView(
+                    factory = { surfaceView!! },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
         }
 
         Box(modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter)) {
@@ -400,7 +605,8 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
                     externalTriggerStart = triggerStartRecording ,
                     onStartRecording = {
                         //isTimerActive = false
-                        startVideoRecording()
+                        //startVideoRecording()
+                        startVideoRecordingDeepAR()
                         triggerStartRecording  = false
                     },
                     onPauseRecording = {
@@ -508,7 +714,13 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
                 sheetState = sheetState,
                 dragHandle = null
             ) {
-                FilterBottomSheetUI(onDismiss = { showFilterSheet = false })
+                FilterBottomSheetUI(
+                    selectedFilter = selectedFilter,
+                    onFilterSelected = { filter ->
+                        applyDeepARFilter(filter)
+                    },
+                    onDismiss = { showFilterSheet = false }
+                )
             }
         }
     }
@@ -538,6 +750,65 @@ fun bindCameraUseCases(
         onCameraControlAvailable(camera.cameraControl)
         camera.cameraControl.enableTorch(flashOn)
         onVideoCaptureReady(videoCapture)
+    } catch (exc: Exception) {
+        Log.e("CameraX", "Use case binding failed", exc)
+    }
+}
+
+@androidx.annotation.OptIn(ExperimentalGetImage::class)
+@OptIn(ExperimentalGetImage::class)
+fun bindCameraWithDeepAR(
+    cameraProvider: ProcessCameraProvider,
+    lensFacing: Int,
+    lifecycleOwner: LifecycleOwner,
+    deepAR: DeepAR?,
+    onVideoCaptureReady: (VideoCapture<Recorder>) -> Unit
+) {
+    val recorder = Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HIGHEST)).build()
+    val videoCapture = VideoCapture.withOutput(recorder)
+
+    val imageAnalysis = ImageAnalysis.Builder()
+        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+        .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
+        .build()
+
+    imageAnalysis.setAnalyzer(Executors.newSingleThreadExecutor()) { imageProxy ->
+        val mediaImage = imageProxy.image
+        if (mediaImage != null && deepAR != null) {
+            val buffer = mediaImage.planes[0].buffer
+            val width = mediaImage.width
+            val height = mediaImage.height
+            val rotation = imageProxy.imageInfo.rotationDegrees
+
+            Handler(Looper.getMainLooper()).post {
+                try {
+                    deepAR.receiveFrame(
+                        buffer,
+                        width,
+                        height,
+                        rotation,
+                        lensFacing == CameraSelector.LENS_FACING_FRONT,
+                        DeepARImageFormat.YUV_NV21,
+                        mediaImage.planes[0].rowStride / width
+                    )
+                } catch (e: Exception) {
+                    Log.e("DeepAR", "receiveFrame failed: ${e.message}", e)
+                } finally {
+                    imageProxy.close()
+                }
+            }
+        } else {
+            imageProxy.close()
+        }
+    }
+
+    val cameraSelector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
+
+    try {
+        cameraProvider.unbindAll()
+        cameraProvider.bindToLifecycle(lifecycleOwner, cameraSelector, imageAnalysis, videoCapture)
+        onVideoCaptureReady(videoCapture)
+        Log.d("CameraX", "✅ Camera bound with DeepAR")
     } catch (exc: Exception) {
         Log.e("CameraX", "Use case binding failed", exc)
     }

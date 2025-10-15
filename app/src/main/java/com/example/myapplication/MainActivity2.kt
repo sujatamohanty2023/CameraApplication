@@ -246,41 +246,6 @@ class MainActivity2 : ComponentActivity(), AREventListener {
             imageProxy.close()
         }
     }
-
-    private fun yuv420ToNv21(image: ImageProxy): ByteArray {
-        val yBuffer = image.planes[0].buffer
-        val uBuffer = image.planes[1].buffer
-        val vBuffer = image.planes[2].buffer
-
-        val ySize = yBuffer.remaining()
-        val uSize = uBuffer.remaining()
-        val vSize = vBuffer.remaining()
-
-        val nv21 = ByteArray(ySize + uSize + vSize)
-
-        // Copy Y plane
-        yBuffer.get(nv21, 0, ySize)
-
-        // Interleave V and U into VU (NV21 format)
-        val uvPixelStride = image.planes[1].pixelStride
-        val uvRowStride = image.planes[1].rowStride
-
-        if (uvPixelStride == 1) {
-            vBuffer.get(nv21, ySize, vSize)
-            uBuffer.get(nv21, ySize + vSize, uSize)
-        } else {
-            var pos = ySize
-            for (row in 0 until image.height / 2) {
-                for (col in 0 until image.width / 2) {
-                    val uvIndex = row * uvRowStride + col * uvPixelStride
-                    nv21[pos++] = vBuffer.get(uvIndex)
-                    nv21[pos++] = uBuffer.get(uvIndex)
-                }
-            }
-        }
-
-        return nv21
-    }
 }
 
 // Filter data class

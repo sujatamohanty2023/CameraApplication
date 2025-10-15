@@ -22,18 +22,37 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 @Composable
-fun FilterBottomSheetUI(onDismiss: () -> Unit) {
+fun FilterBottomSheetUI(
+    selectedFilter: FilterItem?,
+    onFilterSelected: (FilterItem?) -> Unit,
+    onDismiss: () -> Unit
+) {
     var selectedTab by remember { mutableStateOf("Trending") }
     val tabs = listOf("Trending", "New", "Face", "Green Screen")
 
-    val filters = listOf(
-        "Original", "Bright", "Retro", "Cool", "Warm", "Cinematic", "Soft", "Night",
-        "Pop", "Vivid", "Dream", "Moody","Original", "Bright", "Retro", "Cool", "Warm", "Cinematic", "Soft", "Night",
-        "Pop", "Vivid", "Dream", "Moody","Original", "Bright", "Retro", "Cool", "Warm", "Cinematic", "Soft", "Night",
-        "Pop", "Vivid", "Dream", "Moody"
-    )
-
-    var selectedFilter by remember { mutableStateOf("Original") }
+    val filters = remember {
+        listOf(
+            FilterItem("None", null),
+            FilterItem("Viking", "file:///android_asset/viking_helmet.deepar"),
+            FilterItem("Makeup", "file:///android_asset/MakeupLook.deepar"),
+            FilterItem("Split View", "file:///android_asset/Split_View_Look.deepar"),
+            FilterItem("Emotions", "file:///android_asset/Emotions_Exaggerator.deepar"),
+            FilterItem("Meter", "file:///android_asset/Emotion_Meter.deepar"),
+            FilterItem("Stallone", "file:///android_asset/Stallone.deepar"),
+            FilterItem("Flowers", "file:///android_asset/flower_face.deepar"),
+            FilterItem("Galaxy", "file:///android_asset/galaxy_background.deepar"),
+            FilterItem("Humanoid", "file:///android_asset/Humanoid.deepar"),
+            FilterItem("Neon Devil", "file:///android_asset/Neon_Devil_Horns.deepar"),
+            FilterItem("Ping Pong", "file:///android_asset/Ping_Pong.deepar"),
+            FilterItem("Hearts", "file:///android_asset/Pixel_Hearts.deepar"),
+            FilterItem("Snail", "file:///android_asset/Snail.deepar"),
+            FilterItem("Hope", "file:///android_asset/Hope.deepar"),
+            FilterItem("Vendetta", "file:///android_asset/Vendetta_Mask.deepar"),
+            FilterItem("Fire", "file:///android_asset/Fire_Effect.deepar"),
+            FilterItem("Burning", "file:///android_asset/burning_effect.deepar"),
+            FilterItem("Elephant", "file:///android_asset/Elephant_Trunk.deepar")
+        )
+    }
 
     Column(
         modifier = Modifier
@@ -67,7 +86,7 @@ fun FilterBottomSheetUI(onDismiss: () -> Unit) {
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Filter Grid — Instagram/TikTok style
+        // Grid of filters
         LazyVerticalGrid(
             columns = GridCells.Fixed(6),
             modifier = Modifier
@@ -83,7 +102,7 @@ fun FilterBottomSheetUI(onDismiss: () -> Unit) {
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center,
                     modifier = Modifier.clickable {
-                        selectedFilter = filter
+                        onFilterSelected(filter)
                     }
                 ) {
                     Box(
@@ -96,7 +115,6 @@ fun FilterBottomSheetUI(onDismiss: () -> Unit) {
                             ),
                         contentAlignment = Alignment.Center
                     ) {
-                        // Placeholder for thumbnail (you can replace with Image)
                         Icon(
                             painter = painterResource(id = R.drawable.filter),
                             contentDescription = null,
@@ -104,8 +122,7 @@ fun FilterBottomSheetUI(onDismiss: () -> Unit) {
                             modifier = Modifier.size(15.dp)
                         )
 
-                        // Download icon overlay (if not downloaded)
-                        if (filter != "Original") {
+                        if (filter.name != "None") {
                             Icon(
                                 painter = painterResource(id = R.drawable.ic_download),
                                 contentDescription = null,
@@ -117,9 +134,11 @@ fun FilterBottomSheetUI(onDismiss: () -> Unit) {
                             )
                         }
                     }
+
                     Spacer(modifier = Modifier.height(6.dp))
+
                     Text(
-                        text = filter,
+                        text = filter.name,
                         color = if (filter == selectedFilter) Color.White else Color.Gray,
                         fontSize = 12.sp,
                         fontWeight = if (filter == selectedFilter) FontWeight.Bold else FontWeight.Normal,
@@ -130,4 +149,5 @@ fun FilterBottomSheetUI(onDismiss: () -> Unit) {
         }
     }
 }
+
 
