@@ -29,11 +29,12 @@ class CameraViewModel : ViewModel() {
 
     private val _triggerStartRecording = MutableStateFlow(false)
     val triggerStartRecording: StateFlow<Boolean> = _triggerStartRecording
+    private val _segmentDurations = MutableStateFlow<List<Float>>(emptyList())
+    val segmentDurations: StateFlow<List<Float>> = _segmentDurations
 
     fun setSelectedMusic(item: MusicItem?) {
         _selectedMusic.value = item
     }
-
     fun addVideo(uri: Uri) {
         viewModelScope.launch {
             _recordedVideos.value = _recordedVideos.value + uri
@@ -82,6 +83,18 @@ class CameraViewModel : ViewModel() {
             _triggerStartRecording.value = false
             Log.d("CameraViewModel", "Recording trigger reset")
         }
+    }
+
+    fun addSegment(duration: Float) {
+        _segmentDurations.value = _segmentDurations.value + duration
+    }
+
+    fun clearSegments() {
+        _segmentDurations.value = emptyList()
+    }
+
+    fun deleteLastSegment() {
+        _segmentDurations.value = _segmentDurations.value.dropLast(1)
     }
 
     // ✅ ADD: Reset all states

@@ -559,6 +559,7 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
         ) {
             if (selectedTab != "Live") {
                 RecordBar(
+                    cameraViewmodel=viewModel,
                     selectedTab = selectedTab,
                     onPhotoClick = { Log.d("CameraScreen", "Photo captured") },
                     isRecording = isRecording,

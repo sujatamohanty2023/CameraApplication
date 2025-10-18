@@ -39,9 +39,11 @@ fun SegmentRecordButton(
     onStartRecording: () -> Unit = {},
     onPauseRecording: () -> Unit = {},
     onResumeRecording: () -> Unit = {},
-    onStopRecording: () -> Unit = {}
+    onStopRecording: () -> Unit = {},
+    segmentDurations: List<Float>,
+    onSegmentRecorded: (Float) -> Unit,
 ) {
-    val segments = remember { mutableStateListOf<Float>() }
+    val segments = segmentDurations
     val whiteSeparators = remember { mutableStateListOf<Float>() }
     var currentSegmentProgress by remember { mutableFloatStateOf(0f) }
     val coroutineScope = rememberCoroutineScope()
@@ -51,7 +53,7 @@ fun SegmentRecordButton(
         recordingJob?.cancel()
         recordingJob = null
         if (currentSegmentProgress > 0f) {
-            segments.add(currentSegmentProgress)
+            onSegmentRecorded(currentSegmentProgress)
             whiteSeparators.add(segments.sum() * 360f)
             currentSegmentProgress = 0f
             onStopRecording()
@@ -81,7 +83,7 @@ fun SegmentRecordButton(
         recordingJob?.cancel()
         recordingJob = null
         if (currentSegmentProgress > 0f) {
-            segments.add(currentSegmentProgress)
+            onSegmentRecorded(currentSegmentProgress)
             whiteSeparators.add(segments.sum() * 360f)
             currentSegmentProgress = 0f
         }

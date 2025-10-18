@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -23,9 +25,11 @@ import androidx.compose.ui.unit.sp
 
 @Composable
 fun RecordBar(
+    cameraViewmodel: CameraViewModel,
     selectedTab: String, onPhotoClick: () -> Unit, isRecording: Boolean, isPaused: Boolean,externalTriggerStart: Boolean,
     onStartRecording: () -> Unit, onPauseRecording: () -> Unit, onResumeRecording: () -> Unit, onStopRecording: () -> Unit
 ) {
+    val segmentDurations by cameraViewmodel.segmentDurations.collectAsState()
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -50,7 +54,8 @@ fun RecordBar(
             } else if (selectedTab == "Clips") {
                 SegmentRecordButton(
                     isRecording = isRecording, isPaused = isPaused, onStartRecording = onStartRecording,externalTriggerStart=externalTriggerStart,
-                    onPauseRecording = onPauseRecording, onResumeRecording = onResumeRecording, onStopRecording = onStopRecording
+                    onPauseRecording = onPauseRecording, onResumeRecording = onResumeRecording, onStopRecording = onStopRecording,segmentDurations = segmentDurations,                            // ✅ Pass segments
+                    onSegmentRecorded = { cameraViewmodel.addSegment(it) },
                 )
             }
         }
