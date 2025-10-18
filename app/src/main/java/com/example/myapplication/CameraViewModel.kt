@@ -1,6 +1,7 @@
 package com.example.myapplication
 
 import android.net.Uri
+import android.util.Log
 import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -16,6 +17,19 @@ class CameraViewModel : ViewModel() {
     private val _selectedMusic = mutableStateOf<MusicItem?>(null)
     val selectedMusic: State<MusicItem?> = _selectedMusic
 
+    private val _isRecording = MutableStateFlow(false)
+    val isRecording: StateFlow<Boolean> = _isRecording
+
+    private val _isPaused = MutableStateFlow(false)
+    val isPaused: StateFlow<Boolean> = _isPaused
+
+    // ✅ ADD: Track timer active state
+    private val _isTimerActive = MutableStateFlow(false)
+    val isTimerActive: StateFlow<Boolean> = _isTimerActive
+
+    private val _triggerStartRecording = MutableStateFlow(false)
+    val triggerStartRecording: StateFlow<Boolean> = _triggerStartRecording
+
     fun setSelectedMusic(item: MusicItem?) {
         _selectedMusic.value = item
     }
@@ -23,12 +37,61 @@ class CameraViewModel : ViewModel() {
     fun addVideo(uri: Uri) {
         viewModelScope.launch {
             _recordedVideos.value = _recordedVideos.value + uri
+            Log.d("CameraViewModel", "✅ Video added. Total: ${_recordedVideos.value.size}")
         }
     }
 
     fun clearVideos() {
         viewModelScope.launch {
             _recordedVideos.value = emptyList()
+        }
+    }
+
+    fun setRecordingState(isRecording: Boolean) {
+        viewModelScope.launch {
+            _isRecording.value = isRecording
+            Log.d("CameraViewModel", "Recording state: $isRecording")
+        }
+    }
+
+    fun setPausedState(isPaused: Boolean) {
+        viewModelScope.launch {
+            _isPaused.value = isPaused
+            Log.d("CameraViewModel", "Paused state: $isPaused")
+        }
+    }
+
+    // ✅ ADD: Timer active state
+    fun setTimerActive(isActive: Boolean) {
+        viewModelScope.launch {
+            _isTimerActive.value = isActive
+            Log.d("CameraViewModel", "Timer active: $isActive")
+        }
+    }
+    // ✅ ADD: Trigger recording start
+    fun triggerRecordingStart() {
+        viewModelScope.launch {
+            _triggerStartRecording.value = true
+            Log.d("CameraViewModel", "Recording trigger activated")
+        }
+    }
+
+    // ✅ ADD: Reset trigger
+    fun resetRecordingTrigger() {
+        viewModelScope.launch {
+            _triggerStartRecording.value = false
+            Log.d("CameraViewModel", "Recording trigger reset")
+        }
+    }
+
+    // ✅ ADD: Reset all states
+    fun resetStates() {
+        viewModelScope.launch {
+            _isRecording.value = false
+            _isPaused.value = false
+            _isTimerActive.value = false
+            _triggerStartRecording.value = false
+            Log.d("CameraViewModel", "All states reset")
         }
     }
 }

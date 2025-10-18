@@ -18,6 +18,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
+data class FilterItem(
+    val name: String,
+    val path: String? // null means no filter
+)
 @Composable
 fun FilterBottomSheetUI(
     selectedFilter: FilterItem?,
@@ -54,13 +58,13 @@ fun FilterBottomSheetUI(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color.Black)
+            .background(Color(0xCC000000))
             .padding(bottom = 8.dp)
     ) {
         // Tabs
         ScrollableTabRow(
             selectedTabIndex = tabs.indexOf(selectedTab),
-            containerColor = Color.Black,
+            containerColor =Color.Transparent,
             contentColor = Color.White,
             edgePadding = 8.dp,
             indicator = {}
@@ -89,7 +93,7 @@ fun FilterBottomSheetUI(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(120.dp)
-                .background(Color.Black),
+                .background(Color.Transparent),
             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(3.dp),
             verticalArrangement = Arrangement.spacedBy(5.dp)

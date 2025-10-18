@@ -24,6 +24,7 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.video.*
 import androidx.camera.view.PreviewView
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -55,21 +56,22 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
     val lifecycleOwner = LocalLifecycleOwner.current
     val coroutineScope = rememberCoroutineScope()
 
+    // ✅ Collect states from ViewModel
+    val recordedVideos by viewModel.recordedVideos.collectAsState()
+    val isRecording by viewModel.isRecording.collectAsState()
+    val isPaused by viewModel.isPaused.collectAsState()
+    val isTimerActive by viewModel.isTimerActive.collectAsState()
+    val triggerStartRecording by viewModel.triggerStartRecording.collectAsState()
+
     val tabs = listOf("Photo", "Clips", "Live")
     var selectedTab by remember { mutableStateOf("Clips") }
     var lensFacing by remember { mutableIntStateOf(CameraSelector.LENS_FACING_FRONT) }
     var isFlashOn by remember { mutableStateOf(false) }
     var cameraControl by remember { mutableStateOf<CameraControl?>(null) }
     var cameraPermissionGranted by remember { mutableStateOf(false) }
-    var previewView: PreviewView? by remember { mutableStateOf(null) }
     var cameraProvider by remember { mutableStateOf<ProcessCameraProvider?>(null) }
-    var isRecording by remember { mutableStateOf(false) }
-    var isPaused by remember { mutableStateOf(false) }
 
-    val outputSegments = remember { mutableStateListOf<Uri>() }
-    var videoCapture by remember { mutableStateOf<VideoCapture<Recorder>?>(null) }
-    var recording by remember { mutableStateOf<Recording?>(null) }
-    var triggerStartRecording  by remember { mutableStateOf(false) }
+    var currentRecordingFile by remember { mutableStateOf<File?>(null) }
 
     var showTimerPicker by remember { mutableStateOf(false) }
     var selectedTimerSeconds by remember { mutableIntStateOf(0) }
@@ -79,7 +81,6 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
     var recordingStartTime by remember { mutableFloatStateOf(0f) }
     var recordingEndTime by remember { mutableFloatStateOf(15f) }
     var timerCountdown by remember { mutableIntStateOf(3) }
-    var isTimerActive by remember { mutableStateOf(false) }
 
     val audioTrimViewModel: AudioTrimmerViewModel = viewModel()
     var showMusicPicker by remember { mutableStateOf(false) }
@@ -177,128 +178,50 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
             }
         }
     }
-
-    // SEPARATED RECORDING FUNCTION
-    fun startVideoRecording() {
-        if (!hasAllPermissions(context)) {
-            Toast.makeText(context, "Permissions missing", Toast.LENGTH_SHORT).show()
-            return
-        }
-
-        val dir = context.getExternalFilesDir(Environment.DIRECTORY_MOVIES)
-        dir?.mkdirs()
-        val name = "segment_${System.currentTimeMillis()}.mp4"
-        val file = File(dir, name)
-        val outputOptions = FileOutputOptions.Builder(file).build()
-
-        val pendingRecording = videoCapture?.output?.prepareRecording(context, outputOptions)
-        val finalRecording = try {
-            pendingRecording?.withAudioEnabled()
-        } catch (e: SecurityException) {
-            Log.e("VideoCapture", "SecurityException: Missing RECORD_AUDIO permission", e)
-            pendingRecording
-        }
-
-        val recordingSession = finalRecording?.start(ContextCompat.getMainExecutor(context)) { event ->
-            if (event is VideoRecordEvent.Finalize) {
-                if (event.hasError()) {
-                    Log.e("VideoCapture", "Recording error: ${event.error}")
-                } else {
-                    outputSegments.add(event.outputResults.outputUri)
-                    Log.d("VideoCapture", "Saved at: ${file.absolutePath}")
-                    viewModel.addVideo(event.outputResults.outputUri)
-                }
-            }
-        }
-
-        recording = recordingSession
-        isRecording = true
-        isPaused = false
-
-        selectedMusic?.let {
-            try {
-                Log.d("AudioTrimmer", "Starting playback from ${audioTrimViewModel.startMs}ms")
-
-                if (exoPlayer.playbackState == Player.STATE_READY) {
-                    exoPlayer.seekTo(audioTrimViewModel.startMs)
-                    exoPlayer.play()
-                    isMusicPlaying = true
-                } else {
-                    coroutineScope.launch {
-                        var attempts = 0
-                        while (exoPlayer.playbackState != Player.STATE_READY && attempts < 50) {
-                            delay(50)
-                            attempts++
-                        }
-                        if (exoPlayer.playbackState == Player.STATE_READY && isRecording && !isPaused) {
-                            exoPlayer.seekTo(audioTrimViewModel.startMs)
-                            exoPlayer.play()
-                            isMusicPlaying = true
-                        }
-                    }
-                }
-
-                autoStopJob?.cancel()
-                val durationMs = if (isTimerActive) {
-                    ((recordingEndTime - recordingStartTime) * 1000).toLong()
-                } else {
-                    (audioTrimViewModel.endMs - audioTrimViewModel.startMs).coerceAtLeast(100)
-                }
-
-                autoStopJob = coroutineScope.launch {
-                    delay(durationMs)
-                    if (isRecording) {
-                        recording?.stop()
-                        recording = null
-                        isRecording = false
-                        isPaused = false
-                        isTimerActive = false
-                        if (isMusicPlaying) {
-                            exoPlayer.pause()
-                            isMusicPlaying = false
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e("AudioTrimmer", "Error playing audio", e)
-            }
-        } ?: run {
-            if (isTimerActive) {
-                val durationMs = ((recordingEndTime - recordingStartTime) * 1000).toLong()
-                autoStopJob?.cancel()
-                autoStopJob = coroutineScope.launch {
-                    delay(durationMs)
-                    if (isRecording) {
-                        recording?.stop()
-                        recording = null
-                        isRecording = false
-                        isPaused = false
-                        isTimerActive = false
-                    }
-                }
-            }
-        }
-    }
     fun stopDeepARRecording(file: File) {
         try {
             deepAR?.stopVideoRecording()
-            isRecording = false
-            isPaused = false
-            isTimerActive = false
-
-            outputSegments.add(Uri.fromFile(file))
-            viewModel.addVideo(Uri.fromFile(file))
-
+            // Stop music immediately
             if (isMusicPlaying) {
                 exoPlayer.pause()
                 isMusicPlaying = false
             }
 
-            Log.d("DeepAR", "Recording stopped and saved: ${file.absolutePath}")
+            autoStopJob?.cancel()
+            autoStopJob = null
+
+            // ✅ Update via ViewModel
+            viewModel.setRecordingState(false)
+            viewModel.setPausedState(false)
+            viewModel.setTimerActive(false)
+
+            Handler(Looper.getMainLooper()).postDelayed({
+                try {
+                    if (file.exists()) {
+                        val fileSize = file.length()
+                        if (fileSize > 0) {
+                            val uri = Uri.fromFile(file)
+                            viewModel.addVideo(uri)
+                        } else {
+                            file.delete()
+                        }
+                    } else {
+                        Log.e("DeepAR", "❌ File not found: ${file.absolutePath}")
+                        Toast.makeText(context, "Recording failed - file not saved", Toast.LENGTH_SHORT).show()
+                    }
+                } catch (e: Exception) {
+                    Log.e("DeepAR", "Error checking file", e)
+                } finally {
+                    currentRecordingFile = null
+                }
+            }, 1000)
 
         } catch (e: Exception) {
             Log.e("DeepAR", "Error stopping DeepAR recording: ${e.message}", e)
-            Toast.makeText(context, "Stop recording failed", Toast.LENGTH_SHORT).show()
+            viewModel.setRecordingState(false)
+            viewModel.setPausedState(false)
+            viewModel.setTimerActive(false)
+            currentRecordingFile = null
         }
     }
 
@@ -308,15 +231,32 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
             return
         }
 
+        if (deepAR == null || !isDeepARInitialized) {
+            Toast.makeText(context, "DeepAR not initialized", Toast.LENGTH_SHORT).show()
+            Log.e("DeepAR", "Cannot start recording - DeepAR not ready")
+            return
+        }
+
         val dir = context.getExternalFilesDir(Environment.DIRECTORY_MOVIES)
-        dir?.mkdirs()
-        val file = File(dir, "deepar_segment_${System.currentTimeMillis()}.mp4")
+        if (dir == null) {
+            Toast.makeText(context, "Storage not available", Toast.LENGTH_SHORT).show()
+            return
+        }
+        dir.mkdirs()
+        val file = File(dir, "deepar_${System.currentTimeMillis()}.mp4")
+        currentRecordingFile = file
 
         try {
             // Start DeepAR recording
-            deepAR?.startVideoRecording(file.absolutePath)
-            isRecording = true
-            isPaused = false
+            val width = 720
+            val height = 1280
+            deepAR?.startVideoRecording(
+                file.absolutePath,
+                width,
+                height,
+            )
+            viewModel.setRecordingState(true)
+            viewModel.setPausedState(false)
 
             Log.d("DeepAR", "Recording started at: ${file.absolutePath}")
 
@@ -352,9 +292,9 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
                     autoStopJob?.cancel()
                     autoStopJob = coroutineScope.launch {
                         delay(durationMs)
-                        stopDeepARRecording(file)
-                        outputSegments.add(Uri.fromFile(file))
-                        viewModel.addVideo(Uri.fromFile(file))
+                        if (isRecording && currentRecordingFile != null) {
+                            stopDeepARRecording(currentRecordingFile!!)
+                        }
                     }
 
                 } catch (e: Exception) {
@@ -367,9 +307,9 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
                     autoStopJob?.cancel()
                     autoStopJob = coroutineScope.launch {
                         delay(durationMs)
-                        stopDeepARRecording(file)
-                        outputSegments.add(Uri.fromFile(file))
-                        viewModel.addVideo(Uri.fromFile(file))
+                        if (isRecording && currentRecordingFile != null) {
+                            stopDeepARRecording(currentRecordingFile!!)
+                        }
                     }
                 }
             }
@@ -377,6 +317,9 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
         } catch (e: Exception) {
             Log.e("DeepAR", "Error starting DeepAR recording: ${e.message}", e)
             Toast.makeText(context, "Recording failed", Toast.LENGTH_SHORT).show()
+            viewModel.setRecordingState(false)
+            viewModel.setPausedState(false)
+            currentRecordingFile = null
         }
     }
     LaunchedEffect(Unit) {
@@ -391,10 +334,29 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
         exoPlayer.addListener(listener)
     }
 
+    LaunchedEffect(triggerStartRecording) {
+        if (triggerStartRecording && !isRecording) {
+            startVideoRecordingDeepAR()
+            viewModel.resetRecordingTrigger() // Reset immediately after starting
+        }
+    }
+
+    // ✅ Reset trigger when screen appears
+    LaunchedEffect(Unit) {
+        viewModel.resetRecordingTrigger()
+        Log.d("CameraScreen", "Screen initialized, trigger reset")
+    }
+
     DisposableEffect(Unit) {
         onDispose {
+            // Clean up when leaving screen
             exoPlayer.release()
             deepAR?.release()
+
+            // Reset recording states when leaving
+            viewModel.resetStates()
+
+            Log.d("CameraScreen", "Screen disposed, states reset")
         }
     }
 
@@ -471,8 +433,7 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
                 cameraProvider!!,
                 lensFacing,
                 lifecycleOwner,
-                deepAR,
-                onVideoCaptureReady = { videoCapture = it }
+                deepAR
             )
         }
     }
@@ -531,7 +492,7 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
                 )
                 SideControl(icon = R.drawable.speed, label = "Speed", onClick = {})
                 SideControl(icon = R.drawable.template, label = "Template", onClick = {})
-                if (outputSegments.isNotEmpty()) {
+                if (recordedVideos.isNotEmpty()) {
                     SideControl(icon = R.drawable.ic_check, label = "Done",
                         onClick = { navController.navigate("video_playback_screen") })
                 }
@@ -555,7 +516,7 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
             ModalBottomSheet(
                 onDismissRequest = {
                     showVideoTimerScreen = false
-                    isTimerActive = false
+                    viewModel.setTimerActive(false)
                 },
                 containerColor = Color(0xFF101010),
                 sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -564,11 +525,11 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
                     totalDuration = 60f,
                     onRecordStart = {
                         showVideoTimerScreen = false
-                        isTimerActive = true
+                        viewModel.setTimerActive(true)
                     },
                     onCancel = {
                         showVideoTimerScreen = false
-                        isTimerActive = false
+                        viewModel.setTimerActive(false)
                     },
                     onTimerSet = { start, end, countdown ->
                         recordingStartTime = start
@@ -586,8 +547,8 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
                 context = context,
                 onCountdownFinish = {
                     timerCountdown = 0
-                    isTimerActive = false
-                    triggerStartRecording  = true
+                    viewModel.setTimerActive(false)
+                    viewModel.triggerRecordingStart()
                 }
             )
         }
@@ -604,22 +565,25 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
                     isPaused = isPaused,
                     externalTriggerStart = triggerStartRecording ,
                     onStartRecording = {
-                        //isTimerActive = false
-                        //startVideoRecording()
                         startVideoRecordingDeepAR()
-                        triggerStartRecording  = false
+                        viewModel.resetRecordingTrigger()
                     },
                     onPauseRecording = {
-                        recording?.pause()
+                        currentRecordingFile?.let { file ->
+                            stopDeepARRecording(file)
+                        } ?: run {
+                            Log.e("DeepAR", "No recording in progress!")
+                            viewModel.setRecordingState(false)
+                        }
                         autoStopJob?.cancel()
                         if (isMusicPlaying) {
                             exoPlayer.pause()
                             isMusicPlaying = false
                         }
-                        isPaused = true
+                        viewModel.setPausedState(true)
                     },
                     onResumeRecording = {
-                        recording?.resume()
+                        startVideoRecordingDeepAR()
                         selectedMusic?.let {
                             try {
                                 exoPlayer.play()
@@ -630,13 +594,11 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
                                     autoStopJob = coroutineScope.launch {
                                         delay(remainingDuration)
                                         if (isRecording) {
-                                            recording?.stop()
-                                            recording = null
-                                            isRecording = false
-                                            isPaused = false
-                                            if (isMusicPlaying) {
-                                                exoPlayer.pause()
-                                                isMusicPlaying = false
+                                            currentRecordingFile?.let { file ->
+                                                stopDeepARRecording(file)
+                                            } ?: run {
+                                                Log.e("DeepAR", "No recording in progress!")
+                                                viewModel.setRecordingState(false)
                                             }
                                         }
                                     }
@@ -645,20 +607,26 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
                                 Log.e("AudioTrimmer", "Error resuming audio", e)
                             }
                         }
-                        isPaused = false
+                        viewModel.setPausedState(false)
                     },
                     onStopRecording = {
-                        recording?.stop()
-                        recording = null
-                        isRecording = false
-                        isPaused = false
+                        /*recording?.stop()
+                        recording = null*/
+                        currentRecordingFile?.let { file ->
+                            stopDeepARRecording(file)
+                        } ?: run {
+                            Log.e("DeepAR", "No recording in progress!")
+                            viewModel.setRecordingState(false)
+                        }
+                        viewModel.setRecordingState(false)
+                        viewModel.setPausedState(false)
                         autoStopJob?.cancel()
                         autoStopJob = null
                         if (isMusicPlaying) {
                             exoPlayer.pause()
                             isMusicPlaying = false
                         }
-                        isTimerActive = false
+                        viewModel.setTimerActive(false)
                         selectedMusic?.let { exoPlayer.seekTo(audioTrimViewModel.startMs) }
                     }
                 )
@@ -710,7 +678,7 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
             )
             ModalBottomSheet(
                 onDismissRequest = { showFilterSheet = false },
-                containerColor = Color(0xFF101010),
+                containerColor = Color.Black.copy(alpha = 0.9f),
                 sheetState = sheetState,
                 dragHandle = null
             ) {
@@ -735,38 +703,14 @@ fun hasAllPermissions(context: Context): Boolean {
     }
     return permissions.all { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }
 }
-fun bindCameraUseCases(
-    cameraProvider: ProcessCameraProvider, previewView: PreviewView, lensFacing: Int, lifecycleOwner: LifecycleOwner,
-    flashOn: Boolean, onCameraControlAvailable: (CameraControl) -> Unit, onVideoCaptureReady: (VideoCapture<Recorder>) -> Unit
-) {
-    val preview = Preview.Builder().build().apply { setSurfaceProvider(previewView.surfaceProvider) }
-    val recorder = Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HIGHEST)).build()
-    val videoCapture = VideoCapture.withOutput(recorder)
-    val cameraSelector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
-
-    try {
-        cameraProvider.unbindAll()
-        val camera = cameraProvider.bindToLifecycle(lifecycleOwner, cameraSelector, preview, videoCapture)
-        onCameraControlAvailable(camera.cameraControl)
-        camera.cameraControl.enableTorch(flashOn)
-        onVideoCaptureReady(videoCapture)
-    } catch (exc: Exception) {
-        Log.e("CameraX", "Use case binding failed", exc)
-    }
-}
-
 @androidx.annotation.OptIn(ExperimentalGetImage::class)
 @OptIn(ExperimentalGetImage::class)
 fun bindCameraWithDeepAR(
     cameraProvider: ProcessCameraProvider,
     lensFacing: Int,
     lifecycleOwner: LifecycleOwner,
-    deepAR: DeepAR?,
-    onVideoCaptureReady: (VideoCapture<Recorder>) -> Unit
+    deepAR: DeepAR?
 ) {
-    val recorder = Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HIGHEST)).build()
-    val videoCapture = VideoCapture.withOutput(recorder)
-
     val imageAnalysis = ImageAnalysis.Builder()
         .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
         .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
@@ -806,8 +750,7 @@ fun bindCameraWithDeepAR(
 
     try {
         cameraProvider.unbindAll()
-        cameraProvider.bindToLifecycle(lifecycleOwner, cameraSelector, imageAnalysis, videoCapture)
-        onVideoCaptureReady(videoCapture)
+        cameraProvider.bindToLifecycle(lifecycleOwner, cameraSelector,imageAnalysis)
         Log.d("CameraX", "✅ Camera bound with DeepAR")
     } catch (exc: Exception) {
         Log.e("CameraX", "Use case binding failed", exc)
