@@ -21,7 +21,9 @@ fun SideControl(
     icon: Int,
     label: String,
     onClick: () -> Unit,
-    onPositionReady: ((Offset) -> Unit)? = null // Optional callback
+    onPositionReady: ((Offset) -> Unit)? = null, // Optional callback
+    iconTint: Color = Color.White,
+    labelColor: Color = Color.White
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -40,12 +42,12 @@ fun SideControl(
         Icon(
             painter = painterResource(id = icon),
             contentDescription = label,
-            tint = Color.White,
+            tint =iconTint,
             modifier = Modifier.size(24.dp)
         )
         Text(
             text = label,
-            color = Color.White,
+            color = labelColor,
             fontSize = 12.sp,
             textAlign = TextAlign.Center
         )

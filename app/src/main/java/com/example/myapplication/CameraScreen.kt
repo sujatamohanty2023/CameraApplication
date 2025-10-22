@@ -73,6 +73,8 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
 
     var currentRecordingFile by remember { mutableStateOf<File?>(null) }
 
+    //var showDeleteDialog by remember { mutableStateOf(false) }
+
     var showTimerPicker by remember { mutableStateOf(false) }
     var selectedTimerSeconds by remember { mutableIntStateOf(0) }
     var timerAnchor by remember { mutableStateOf(Offset.Zero) }
@@ -502,16 +504,38 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
                 )
                 SideControl(icon = R.drawable.speed, label = "Speed", onClick = {})
                 SideControl(icon = R.drawable.template, label = "Template", onClick = {})
-                if (recordedVideos.isNotEmpty()) {
+
+                // ✅ Add Delete button (only show when segments exist)
+               /* if (recordedVideos.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    SideControl(
+                        icon = R.drawable.ic_delete,
+                        label = "Delete",
+                        onClick = { showDeleteDialog = true },
+                        iconTint = Color.Red,
+                        labelColor = Color.Red
+                    )
+                }*/
+              /*  if (recordedVideos.isNotEmpty()) {
                     SideControl(icon = R.drawable.ic_check, label = "Done",
                         onClick = {
                             // Reset recording states before navigation
                             viewModel.resetStates()
                             navController.navigate("video_playback_screen")
                         })
-                }
+                }*/
             }
         }
+        /*if (showDeleteDialog) {
+            DeleteSegmentDialog(
+                onDismiss = { showDeleteDialog = false },
+                onConfirm = {
+                    viewModel.deleteLastSegment()
+                    showDeleteDialog = false
+                    Toast.makeText(context, "Segment deleted", Toast.LENGTH_SHORT).show()
+                }
+            )
+        }*/
 
         if (showTimerPicker) {
             TimerGridPopup(
@@ -573,6 +597,7 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
         ) {
             if (selectedTab != "Live") {
                 RecordBar(
+                    navController=navController,
                     cameraViewmodel=viewModel,
                     selectedTab = selectedTab,
                     onPhotoClick = { Log.d("CameraScreen", "Photo captured") },
