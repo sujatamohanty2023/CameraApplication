@@ -1,6 +1,7 @@
 package com.example.myapplication
 
 import android.os.SystemClock
+import android.util.Log
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -48,6 +49,34 @@ fun SegmentRecordButton(
     var currentSegmentProgress by remember { mutableFloatStateOf(0f) }
     val coroutineScope = rememberCoroutineScope()
     var recordingJob by remember { mutableStateOf<Job?>(null) }
+
+    // ✅ Reset separators when segments change externally (e.g., coming back from navigation)
+    LaunchedEffect(segments.size) {
+        if (segments.isEmpty()) {
+            whiteSeparators.clear()
+            currentSegmentProgress = 0f
+            Log.d("SegmentButton", "✅ Segments cleared, UI reset")
+        } else if (segments.size > whiteSeparators.size) {
+            // Rebuild separators from segment data
+            whiteSeparators.clear()
+            var cumulative = 0f
+            segments.dropLast(1).forEach { seg ->
+                cumulative += seg
+                whiteSeparators.add(cumulative * 360f)
+            }
+            Log.d("SegmentButton", "✅ Separators rebuilt: ${whiteSeparators.size}")
+        }
+    }
+
+    // ✅ Reset progress when not recording
+    LaunchedEffect(isRecording, isPaused) {
+        if (!isRecording && !isPaused) {
+            currentSegmentProgress = 0f
+            recordingJob?.cancel()
+            recordingJob = null
+            Log.d("SegmentButton", "Recording idle, progress reset")
+        }
+    }
 
     fun stopRecording(reason: String = "Manual") {
         recordingJob?.cancel()
@@ -108,9 +137,18 @@ fun SegmentRecordButton(
         contentAlignment = Alignment.Center,
         modifier = modifier.size(outerSize).clickable {
             when {
-                !isRecording -> startSegment()
-                isRecording && !isPaused -> pauseSegment()
-                isRecording && isPaused -> resumeSegment()
+                !isRecording && !isPaused -> {
+                    Log.d("SegmentButton", "Button clicked: Start new segment")
+                    startSegment()
+                }
+                isRecording && !isPaused -> {
+                    Log.d("SegmentButton", "Button clicked: Pause segment")
+                    pauseSegment()
+                }
+                isPaused -> {
+                    Log.d("SegmentButton", "Button clicked: Resume segment")
+                    resumeSegment()
+                }
             }
         }
     ) {
@@ -129,10 +167,16 @@ fun SegmentRecordButton(
                 drawArc(color = Color.Red, startAngle = startAngle, sweepAngle = sweep, useCenter = false, style = Stroke(width = stroke))
                 startAngle += sweep
             }
-
-            if (!isRecording && !isPaused) {
+            // Draw white separators between segments (only when idle)
+            if (!isRecording && !isPaused && whiteSeparators.isNotEmpty()) {
                 whiteSeparators.forEach { angle ->
-                    drawArc(color = Color.LightGray, startAngle = -90f + angle, sweepAngle = 3f, useCenter = false, style = Stroke(width = stroke))
+                    drawArc(
+                        color = Color.LightGray,
+                        startAngle = -90f + angle,
+                        sweepAngle = 3f,
+                        useCenter = false,
+                        style = Stroke(width = stroke)
+                    )
                 }
             }
 

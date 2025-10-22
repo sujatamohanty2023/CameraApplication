@@ -343,8 +343,18 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
 
     // ✅ Reset trigger when screen appears
     LaunchedEffect(Unit) {
+        // Reset recording trigger when screen appears
         viewModel.resetRecordingTrigger()
-        Log.d("CameraScreen", "Screen initialized, trigger reset")
+
+        // ✅ If coming back without videos, reset everything
+        if (recordedVideos.isEmpty()) {
+            viewModel.resetAll()
+        } else {
+            // Just reset recording states but keep segments
+            viewModel.resetStates()
+        }
+
+        Log.d("CameraScreen", "Screen initialized")
     }
 
     DisposableEffect(Unit) {
@@ -473,7 +483,7 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
 
         if (!isRecording && !isPaused) {
             Column(
-                modifier = Modifier.align(Alignment.CenterEnd).padding(end = 10.dp),
+                modifier = Modifier.align(Alignment.CenterEnd).padding(end = 4.dp),
                 verticalArrangement = Arrangement.spacedBy(20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
@@ -494,7 +504,11 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
                 SideControl(icon = R.drawable.template, label = "Template", onClick = {})
                 if (recordedVideos.isNotEmpty()) {
                     SideControl(icon = R.drawable.ic_check, label = "Done",
-                        onClick = { navController.navigate("video_playback_screen") })
+                        onClick = {
+                            // Reset recording states before navigation
+                            viewModel.resetStates()
+                            navController.navigate("video_playback_screen")
+                        })
                 }
             }
         }

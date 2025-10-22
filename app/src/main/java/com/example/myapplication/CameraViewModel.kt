@@ -45,6 +45,7 @@ class CameraViewModel : ViewModel() {
     fun clearVideos() {
         viewModelScope.launch {
             _recordedVideos.value = emptyList()
+            _segmentDurations.value = emptyList()
         }
     }
 
@@ -94,7 +95,16 @@ class CameraViewModel : ViewModel() {
     }
 
     fun deleteLastSegment() {
-        _segmentDurations.value = _segmentDurations.value.dropLast(1)
+        viewModelScope.launch {
+            if (_segmentDurations.value.isNotEmpty()) {
+                _segmentDurations.value = _segmentDurations.value.dropLast(1)
+                // ✅ Also remove the corresponding video
+                if (_recordedVideos.value.isNotEmpty()) {
+                    _recordedVideos.value = _recordedVideos.value.dropLast(1)
+                }
+                Log.d("CameraViewModel", "✅ Last segment deleted. Remaining: ${_segmentDurations.value.size}")
+            }
+        }
     }
 
     // ✅ ADD: Reset all states
@@ -105,6 +115,17 @@ class CameraViewModel : ViewModel() {
             _isTimerActive.value = false
             _triggerStartRecording.value = false
             Log.d("CameraViewModel", "All states reset")
+        }
+    }
+    fun resetAll() {
+        viewModelScope.launch {
+            _isRecording.value = false
+            _isPaused.value = false
+            _isTimerActive.value = false
+            _triggerStartRecording.value = false
+            _segmentDurations.value = emptyList()
+            _recordedVideos.value = emptyList()
+            Log.d("CameraViewModel", "✅ Complete reset - all data cleared")
         }
     }
 }
