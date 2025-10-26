@@ -20,11 +20,7 @@ import androidx.camera.core.CameraControl
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ExperimentalGetImage
 import androidx.camera.core.ImageAnalysis
-import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.camera.video.*
-import androidx.camera.view.PreviewView
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -99,6 +95,10 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
     var isSurfaceReady by remember { mutableStateOf(false) }
     var selectedFilter by remember { mutableStateOf<FilterItem?>(null) }
     var useDeepAR by remember { mutableStateOf(true) } // Toggle for DeepAR
+    var showBeautySheet by remember { mutableStateOf(false) }
+    var smoothness by remember { mutableFloatStateOf(0.9f) }
+    var whiteness by remember { mutableFloatStateOf(0.9f) }
+    var redness by remember { mutableFloatStateOf(0.9f) }
 
     val exoPlayer = remember {
         ExoPlayer.Builder(context)
@@ -490,7 +490,7 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 SideControl(icon = R.drawable.filter, label = "Filter", onClick = { showFilterSheet = true})
-                SideControl(icon = R.drawable.beautify, label = "Beaut.", onClick = {})
+                SideControl(icon = R.drawable.beautify, label = "Beaut.", onClick = {showBeautySheet = true })
                 SideControl(
                     icon = R.drawable.timer,
                     label = if (selectedTimerSeconds > 0) "${selectedTimerSeconds}s" else "Length",
@@ -731,6 +731,46 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
                 )
             }
         }
+        if (showBeautySheet) {
+            val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+            ModalBottomSheet(
+                onDismissRequest = { showBeautySheet = false },
+                sheetState = sheetState,
+                containerColor = Color.Black.copy(alpha = 0.95f)
+            ) {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text("Face Beauty", color = Color.White, style = MaterialTheme.typography.titleMedium)
+
+                    Spacer(Modifier.height(16.dp))
+
+                    BeautySlider("Smoothness", smoothness) {
+                        smoothness = it
+                        deepAR?.changeParameterFloat("beauty", "smoothness","float", it)
+                    }
+
+                    BeautySlider("Whitening", whiteness) {
+                        whiteness = it
+                        deepAR?.changeParameterFloat("beauty", "whiteness", "float",it)
+                    }
+
+                    BeautySlider("Redness", redness) {
+                        redness = it
+                        deepAR?.changeParameterFloat("beauty", "redness", "float",it)
+                    }
+
+                    Spacer(Modifier.height(12.dp))
+                    Button(onClick = { showBeautySheet = false }) {
+                        Text("Close")
+                    }
+                }
+            }
+        }
+
     }
 }
 
@@ -794,6 +834,18 @@ fun bindCameraWithDeepAR(
         Log.d("CameraX", "✅ Camera bound with DeepAR")
     } catch (exc: Exception) {
         Log.e("CameraX", "Use case binding failed", exc)
+    }
+}
+@Composable
+fun BeautySlider(label: String, value: Float, onChange: (Float) -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+        Text(label, color = Color.White, style = MaterialTheme.typography.bodyMedium)
+        Slider(
+            value = value,
+            onValueChange = onChange,
+            valueRange = 0f..1f,
+            modifier = Modifier.fillMaxWidth()
+        )
     }
 }
 
