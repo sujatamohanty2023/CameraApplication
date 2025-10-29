@@ -284,18 +284,29 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
                             }
                         }
                     }
-
-                    val durationMs = if (isTimerActive) {
-                        ((recordingEndTime - recordingStartTime) * 1000).toLong()
-                    } else {
-                        (audioTrimViewModel.endMs - audioTrimViewModel.startMs).coerceAtLeast(100)
+                    val durationMs = when {
+                        isTimerActive -> {
+                            ((recordingEndTime - recordingStartTime) * 1000).toLong()
+                        }
+                        selectedTimerSeconds > 0 -> {
+                            (selectedTimerSeconds * 1000).toLong()
+                        }
+                        selectedMusic != null -> {
+                            (audioTrimViewModel.endMs - audioTrimViewModel.startMs).coerceAtLeast(100)
+                        }
+                        else -> {
+                            15_000L // default 15 seconds
+                        }
                     }
 
                     autoStopJob?.cancel()
                     autoStopJob = coroutineScope.launch {
                         delay(durationMs)
-                        if (isRecording && currentRecordingFile != null) {
-                            stopDeepARRecording(currentRecordingFile!!)
+                        if (isRecording) {
+                            currentRecordingFile?.let { file ->
+                                stopDeepARRecording(file) // stop current clip safely
+                            }
+                            viewModel.setPausedState(true)
                         }
                     }
 
@@ -544,6 +555,8 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
                 selectedTimer = selectedTimerSeconds,
                 onTimerSelected = { seconds ->
                     selectedTimerSeconds = seconds
+                    recordingStartTime = 0f
+                    recordingEndTime = seconds.toFloat()
                     showTimerPicker = false
                 },
                 anchorPosition = timerAnchor,
@@ -560,7 +573,7 @@ fun CameraScreen(navController: NavHostController, viewModel: CameraViewModel) {
                 sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
             ) {
                 VideoTimerScreen(
-                    totalDuration = 60f,
+                    totalDuration =  selectedTimerSeconds.toFloat().coerceAtLeast(5f),
                     onRecordStart = {
                         showVideoTimerScreen = false
                         viewModel.setTimerActive(true)

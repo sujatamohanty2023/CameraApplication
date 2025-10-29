@@ -1,4 +1,4 @@
-// VideoTimerScreen.kt - Complete Bottom Sheet Implementation
+// VideoTimerScreen.kt - Fixed Implementation
 package com.example.myapplication
 
 import android.content.Context
@@ -27,13 +27,20 @@ import kotlin.math.roundToInt
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VideoTimerScreen(
-    totalDuration: Float = 60f,
+    totalDuration: Float,
+    lastSegmentDuration: Float = 0f, // ✅ Pass last segment duration
     onRecordStart: () -> Unit = {},
     onCancel: () -> Unit = {},
     onTimerSet: (Float, Float, Int) -> Unit = { _, _, _ -> }
 ) {
     var clipStart by remember { mutableFloatStateOf(0f) }
-    var clipEnd by remember { mutableFloatStateOf(15f) }
+    // ✅ If lastSegmentDuration > 0, use it; otherwise use totalDuration
+    var clipEnd by remember {
+        mutableFloatStateOf(
+            if (lastSegmentDuration > 0f) lastSegmentDuration
+            else totalDuration.coerceAtLeast(5f)
+        )
+    }
     var countdown by remember { mutableIntStateOf(3) }
 
     val duration = (clipEnd - clipStart).roundToInt()
@@ -87,8 +94,12 @@ fun VideoTimerScreen(
 
         Spacer(Modifier.height(20.dp))
 
-        // Range Slider Card
-        OneThumbRangeSlider(totalDuration)
+        // ✅ Pass state and callbacks to OneThumbRangeSlider
+        OneThumbRangeSlider(
+            totalDuration = totalDuration,
+            clipEnd = clipEnd,
+            onClipEndChange = { newEnd -> clipEnd = newEnd }
+        )
 
         Spacer(Modifier.height(20.dp))
 
@@ -157,7 +168,7 @@ fun VideoTimerScreen(
                 Icon(
                     painter = painterResource(id = R.drawable.timer),
                     contentDescription = null,
-                    tint = Color.White,
+                    tint = Color.Black,
                     modifier = Modifier.size(24.dp)
                 )
                 Spacer(Modifier.width(12.dp))
@@ -213,13 +224,6 @@ fun CountdownChip(
                 width = if (isSelected) 2.dp else 1.dp,
                 color = if (isSelected) Color.White.copy(alpha = 0.5f) else Color.Gray.copy(alpha = 0.3f),
                 shape = RoundedCornerShape(14.dp)
-            )
-            .then(
-                if (!isSelected) {
-                    Modifier
-                } else {
-                    Modifier
-                }
             ),
         contentAlignment = Alignment.Center
     ) {
@@ -234,13 +238,13 @@ fun CountdownChip(
             ) {
                 Text(
                     text = "$seconds",
-                    color = if (isSelected) Color.Black else Color.White ,
+                    color = if (isSelected) Color.Black else Color.White,
                     fontSize = 24.sp,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
                     text = "sec",
-                    color = if (isSelected)Color.Black.copy(alpha = 0.7f) else Color.White.copy(alpha = 0.7f),
+                    color = if (isSelected) Color.Black.copy(alpha = 0.7f) else Color.White.copy(alpha = 0.7f),
                     fontSize = 11.sp
                 )
             }
@@ -248,8 +252,6 @@ fun CountdownChip(
     }
 }
 
-// ===================================================================
-// CountdownOverlay with Sound Effects
 @Composable
 fun CountdownOverlay(
     countdown: Int,
@@ -277,12 +279,10 @@ fun CountdownOverlay(
 
         for (i in countdown downTo 1) {
             currentCount = i
-            // Play beep sound
             toneGen.startTone(ToneGenerator.TONE_PROP_BEEP, 150)
             delay(1000)
         }
 
-        // Play "GO" sound
         showGo = true
         toneGen.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 200)
         delay(500)
@@ -303,7 +303,6 @@ fun CountdownOverlay(
             verticalArrangement = Arrangement.Center
         ) {
             if (!showGo) {
-                // Countdown number
                 Box(
                     modifier = Modifier
                         .size(160.dp)
@@ -327,7 +326,6 @@ fun CountdownOverlay(
                     )
                 }
             } else {
-                // GO! message
                 Text(
                     text = "GO!",
                     color = Color.White,

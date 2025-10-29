@@ -13,16 +13,18 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Text
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun OneThumbRangeSlider(
-    totalDuration: Float = 60f
+    totalDuration: Float,
+    clipEnd: Float,  // ✅ Receive state from parent
+    onClipEndChange: (Float) -> Unit  // ✅ Callback to update parent
 ) {
     val clipStart = 0f // Fixed start
-    var clipEnd by remember { mutableFloatStateOf(15f) }
 
     // Disable interaction for the start thumb
     val disabledInteractionSource = remember { MutableInteractionSource() }
@@ -40,7 +42,7 @@ fun OneThumbRangeSlider(
                 .padding(20.dp)
         ) {
             Text(
-                text = "Adjust End Time (Start Fixed)",
+                text = "Recording Duration",
                 color = Color.White,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.SemiBold
@@ -52,7 +54,8 @@ fun OneThumbRangeSlider(
                 value = clipStart..clipEnd,
                 onValueChange = { range ->
                     // Only update clipEnd — clipStart is fixed
-                    clipEnd = range.endInclusive.coerceIn(clipStart + 1f, totalDuration)
+                    val newEnd = range.endInclusive.coerceIn(clipStart + 1f, totalDuration)
+                    onClipEndChange(newEnd)  // ✅ Notify parent of change
                 },
                 valueRange = 0f..totalDuration,
                 startInteractionSource = disabledInteractionSource, // Disable start thumb
@@ -72,8 +75,17 @@ fun OneThumbRangeSlider(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text("Start: ${clipStart.toInt()}s", color = Color.Gray, fontSize = 14.sp)
-                Text("End: ${clipEnd.toInt()}s", color = Color.Gray, fontSize = 14.sp)
+                Text("End: ${clipEnd.toInt()}s", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
             }
+
+            Spacer(Modifier.height(4.dp))
+
+            Text(
+                "Duration: ${(clipEnd - clipStart).toInt()}s",
+                color = Color.White.copy(alpha = 0.7f),
+                fontSize = 14.sp,
+                modifier = Modifier.align(Alignment.CenterHorizontally)
+            )
         }
     }
 }
