@@ -28,22 +28,13 @@ import kotlin.math.roundToInt
 @Composable
 fun VideoTimerScreen(
     totalDuration: Float,
-    lastSegmentDuration: Float = 0f, // ✅ Pass last segment duration
     onRecordStart: () -> Unit = {},
     onCancel: () -> Unit = {},
     onTimerSet: (Float, Float, Int) -> Unit = { _, _, _ -> }
 ) {
     var clipStart by remember { mutableFloatStateOf(0f) }
-    // ✅ If lastSegmentDuration > 0, use it; otherwise use totalDuration
-    var clipEnd by remember {
-        mutableFloatStateOf(
-            if (lastSegmentDuration > 0f) lastSegmentDuration
-            else totalDuration.coerceAtLeast(5f)
-        )
-    }
+    var clipEnd by remember { mutableFloatStateOf(totalDuration.coerceAtLeast(5f)) }
     var countdown by remember { mutableIntStateOf(3) }
-
-    val duration = (clipEnd - clipStart).roundToInt()
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,

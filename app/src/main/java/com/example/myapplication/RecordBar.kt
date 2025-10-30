@@ -31,7 +31,8 @@ fun RecordBar(
     navController: NavHostController,
     cameraViewmodel: CameraViewModel,
     selectedTab: String, onPhotoClick: () -> Unit, isRecording: Boolean, isPaused: Boolean,externalTriggerStart: Boolean,
-    onStartRecording: () -> Unit, onPauseRecording: () -> Unit, onResumeRecording: () -> Unit, onStopRecording: () -> Unit
+    onStartRecording: () -> Unit, onPauseRecording: () -> Unit, onResumeRecording: () -> Unit, onStopRecording: () -> Unit,
+    externalTriggerPause: Boolean
 ) {
     val segmentDurations by cameraViewmodel.segmentDurations.collectAsState()
     var showDeleteDialog by remember { mutableStateOf(false) }
@@ -85,9 +86,10 @@ fun RecordBar(
                 Icon(painter = painterResource(id = R.drawable.camera_shutter), contentDescription = "Capture Photo", modifier = Modifier.size(70.dp), tint = Color.Unspecified)
             } else if (selectedTab == "Clips") {
                 SegmentRecordButton(
-                    isRecording = isRecording, isPaused = isPaused, onStartRecording = onStartRecording,externalTriggerStart=externalTriggerStart,
+                    isRecording = isRecording, isPaused = isPaused, onStartRecording = onStartRecording,externalTriggerPause = externalTriggerPause,
+                    externalTriggerStart=externalTriggerStart,
                     onPauseRecording = onPauseRecording, onResumeRecording = onResumeRecording, onStopRecording = onStopRecording,segmentDurations = segmentDurations,                            // ✅ Pass segments
-                    onSegmentRecorded = { cameraViewmodel.addSegment(it) },
+                    onSegmentRecorded = { cameraViewmodel.addSegment(it) }
                 )
             }
         }

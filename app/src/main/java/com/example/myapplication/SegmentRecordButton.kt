@@ -36,6 +36,7 @@ fun SegmentRecordButton(
     isRecording: Boolean,
     isPaused: Boolean,
     externalTriggerStart: Boolean = false,
+    externalTriggerPause: Boolean=false,
     maxDurationMs: Long = 15000L,
     onStartRecording: () -> Unit = {},
     onPauseRecording: () -> Unit = {},
@@ -127,6 +128,11 @@ fun SegmentRecordButton(
     LaunchedEffect(externalTriggerStart) {
         if (externalTriggerStart && !isRecording && !isPaused) {
             startSegment()
+        }
+    }
+    LaunchedEffect(externalTriggerPause) {
+        if (externalTriggerPause && isRecording && !isPaused) {
+            pauseSegment()
         }
     }
 
