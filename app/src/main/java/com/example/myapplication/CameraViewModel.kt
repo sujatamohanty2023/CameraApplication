@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.State
+import kotlinx.coroutines.Dispatchers
 
 class CameraViewModel : ViewModel() {
     private val _recordedVideos = MutableStateFlow<List<Uri>>(emptyList())
@@ -57,7 +58,7 @@ class CameraViewModel : ViewModel() {
     }
 
     fun setPausedState(isPaused: Boolean) {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.Main.immediate) {
             _isPaused.value = isPaused
             Log.d("CameraViewModel", "Paused state: $isPaused")
         }
@@ -65,14 +66,14 @@ class CameraViewModel : ViewModel() {
 
     // ✅ ADD: Timer active state
     fun setTimerActive(isActive: Boolean) {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.Main.immediate) {
             _isTimerActive.value = isActive
             Log.d("CameraViewModel", "Timer active: $isActive")
         }
     }
     // ✅ ADD: Trigger recording start
     fun triggerRecordingStart() {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.Main.immediate) {
             _triggerStartRecording.value = true
             Log.d("CameraViewModel", "Recording trigger activated")
         }
